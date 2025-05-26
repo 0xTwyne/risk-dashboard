@@ -405,6 +405,8 @@ CACHE_TIMEOUT = 60  # seconds
 # Basic authentication for UI access
 _ = dash_auth.BasicAuth(app, VALID_USERNAME_PASSWORD_PAIRS)
 
+server = app.server
+
 ###############################################################################
 #  Layout helpers
 ###############################################################################
@@ -649,4 +651,4 @@ def refresh_dashboard(_):
 
 if __name__ == "__main__":
     # Expose on 0.0.0.0 so that containerised deployments work by default.
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8050)), debug=True) 
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8050)), debug=False)
