@@ -11,6 +11,11 @@ from dash.dependencies import Input, Output
 import dash_bootstrap_components as dbc
 import dash_auth
 from flask_caching import Cache
+from flask import Flask
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 ###############################################################################
 #  Configuration – Update these via environment variables on your system / in
@@ -22,7 +27,7 @@ API_ENDPOINT: str = "https://indexer.dev.hyperindex.xyz/235f163/v1/graphql"
 
 # Basic-auth credentials for the dashboard itself (UI access)
 VALID_USERNAME_PASSWORD_PAIRS = {
-    "twyne-team": "7vZ3,{,b4Be/",
+    os.environ.get("DASH_USERNAME", "twyne-team"): os.environ.get("DASH_PASSWORD", "changeme-in-prod")
 }
 
 ###############################################################################
@@ -47,7 +52,6 @@ def _execute_graphql_query(query: str, variables: Optional[Dict[str, Any]] = Non
     }
 
     resp = requests.post(API_ENDPOINT, json=payload, headers=headers, timeout=15)
-    print(resp.text)
     if resp.status_code != 200:
         raise RuntimeError(f"Hasura responded with status {resp.status_code}: {resp.text[:200]}")
 
@@ -118,9 +122,6 @@ def fetch_latest_prices() -> Dict[str, float]:
             price_scaled = _bigint_to_float(price_data["current"]) / (10 ** 8)
             price_map[aggregator_addr] = price_scaled
 
-        print("fetched prices:", price_map)
-            
-        print(f"Fetched {len(price_map)} latest prices")
         return price_map
         
     except Exception as e:
@@ -285,7 +286,6 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         collateral_decimals = collateral_asset_info.get("decimals", 18)
         collateral_aggregator = collateral_asset_info.get("aggregator")
         collateral_price = latest_prices.get(collateral_aggregator, 0.0) if collateral_aggregator else 0.0
-        print(f"collateral_aggregator: {collateral_aggregator}, collateral_price: {collateral_price}")
         
         total_supplied_scaled = _scale_by_decimals(row["totalSupplied"], collateral_decimals)
         total_supplied_usd = total_supplied_scaled * collateral_price
@@ -294,7 +294,6 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         target_decimals = target_vault_info.get("decimals", 18)
         target_aggregator = target_vault_info.get("aggregator")
         target_price = latest_prices.get(target_aggregator, 0.0) if target_aggregator else 0.0
-        print(f"target_aggregator: {target_aggregator}, target_price: {target_price}")
         
         total_borrowed_scaled = _scale_by_decimals(row["totalBorrowed"], target_decimals)
         total_borrowed_usd = total_borrowed_scaled * target_price
@@ -303,7 +302,6 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         intermediate_decimals = intermediate_vault_info.get("decimals", 18)
         intermediate_aggregator = intermediate_vault_info.get("aggregator")
         intermediate_price = latest_prices.get(intermediate_aggregator, 0.0) if intermediate_aggregator else 0.0
-        print(f"intermediate_aggregator: {intermediate_aggregator}, intermediate_price: {intermediate_price}")
         
         total_credit_scaled = _scale_by_decimals(row["totalCredit"], intermediate_decimals)
         total_credit_usd = total_credit_scaled * intermediate_price
@@ -396,7 +394,9 @@ def fetch_latest_intermediate_vaults() -> pd.DataFrame:
 ###############################################################################
 
 external_stylesheets = [dbc.themes.BOOTSTRAP]
-app = Dash(__name__, external_stylesheets=external_stylesheets)
+server = Flask(__name__)
+server.secret_key = os.environ.get("SECRET_KEY", "changeme-in-prod")
+app = Dash(__name__, server=server, external_stylesheets=external_stylesheets)
 
 # Attach Flask-Caching for lightweight memoisation
 cache = Cache(app.server, config={"CACHE_TYPE": "filesystem", "CACHE_DIR": ".dash-cache"})
@@ -404,8 +404,6 @@ CACHE_TIMEOUT = 60  # seconds
 
 # Basic authentication for UI access
 _ = dash_auth.BasicAuth(app, VALID_USERNAME_PASSWORD_PAIRS)
-
-server = app.server
 
 ###############################################################################
 #  Layout helpers
