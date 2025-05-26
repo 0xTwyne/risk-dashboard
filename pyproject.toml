@@ -1,0 +1,15 @@
+[project]
+name = "risk-dashboard"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dash>=3.0.4",
+    "dash-auth>=2.3.0",
+    "dash-bootstrap-components>=2.0.2",
+    "flask-caching>=2.3.1",
+    "pandas>=2.2.3",
+    "plotly>=6.1.1",
+    "requests>=2.32.3",
+]
