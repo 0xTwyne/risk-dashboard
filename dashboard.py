@@ -218,6 +218,53 @@ def fetch_asset_details() -> Dict[str, Dict[str, Any]]:
     print(f"Mapped details for {len(asset_map)} unique assets")
     return asset_map
 
+
+def fetch_liquidation_events() -> pd.DataFrame:
+    """Fetch all liquidation events from CollateralVaultFactory_T_SetCollateralVaultLiquidated.
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing liquidation events sorted by blockNumber in descending order.
+    """
+    query = """
+    query T_CollateralVaultLiquidated {
+        CollateralVaultFactory_T_SetCollateralVaultLiquidated {
+            id
+            blockNumber
+            blockTimestamp
+            collateralVault
+            liquidator
+            srcAddress
+        }
+    }
+    """
+    
+    try:
+        raw = _execute_graphql_query(query)["CollateralVaultFactory_T_SetCollateralVaultLiquidated"]
+        df = pd.DataFrame(raw)
+        
+        if df.empty:
+            print("No liquidation events found")
+            return df
+        
+        # Convert numeric columns safely
+        for col in ["blockNumber", "blockTimestamp"]:
+            df[col] = df[col].apply(_bigint_to_int)
+        
+        # Convert timestamps to human-readable format
+        df["timestamp_readable"] = pd.to_datetime(df["blockTimestamp"], unit='s')
+        
+        # Sort by blockNumber in descending order (most recent first)
+        df = df.sort_values("blockNumber", ascending=False).reset_index(drop=True)
+        
+        print(f"Fetched {len(df)} liquidation events")
+        return df
+        
+    except Exception as e:
+        print(f"Error fetching liquidation events: {e}")
+        return pd.DataFrame()
+
 ###############################################################################
 #  Data-fetching helpers
 ###############################################################################
@@ -450,6 +497,15 @@ app.layout = dbc.Container([
                 sort_action="native",
             ),
         ]),
+        dbc.Tab(label="Liquidations", children=[
+            html.Div(id="liquidations-summary", className="mb-3"),
+            dash_table.DataTable(
+                id="liquidations-table",
+                style_table={"overflowX": "auto"},
+                page_size=20,
+                sort_action="native",
+            ),
+        ]),
     ]),
 
     html.Div(id="last-updated", className="text-end text-muted mt-2"),
@@ -466,6 +522,7 @@ def _get_cached_data() -> Dict[str, pd.DataFrame]:
     return {
         "collateral": fetch_latest_collateral_vaults(),
         "intermediate": fetch_latest_intermediate_vaults(),
+        "liquidations": fetch_liquidation_events(),
     }
 
 
@@ -478,6 +535,9 @@ def _get_cached_data() -> Dict[str, pd.DataFrame]:
         Output("intermediate-table", "data"),
         Output("intermediate-table", "columns"),
         Output("intermediate-utilization-chart", "figure"),
+        Output("liquidations-summary", "children"),
+        Output("liquidations-table", "data"),
+        Output("liquidations-table", "columns"),
         Output("last-updated", "children"),
     ],
     [Input("refresh-interval", "n_intervals")],
@@ -487,6 +547,7 @@ def refresh_dashboard(_):
     datasets = _get_cached_data()
     cv_df: pd.DataFrame = datasets["collateral"]
     iv_df: pd.DataFrame = datasets["intermediate"]
+    liq_df: pd.DataFrame = datasets["liquidations"]
 
     # --- Metric cards (top row) ------------------------------------------------
     total_cvs = len(cv_df)
@@ -628,6 +689,40 @@ def refresh_dashboard(_):
         labels={"value": "USD Amount", "variable": "Metric", "name": "Vault Name"},
     )
 
+    # --- Liquidations table & summary ------------------------------------------
+    total_liquidations = len(liq_df)
+    
+    # Create liquidations summary
+    liquidations_summary = dbc.Alert([
+        html.H5(f"Total Liquidation Events: {total_liquidations}", className="mb-0")
+    ], color="warning", className="text-center")
+    
+    # Prepare liquidations table
+    if not liq_df.empty:
+        liq_df_display = liq_df.copy()
+        
+        # Format the data for display
+        liq_df_display = liq_df_display[[
+            "id", "blockNumber", "timestamp_readable", "collateralVault", 
+            "liquidator", "srcAddress"
+        ]].rename(columns={
+            "id": "Event ID",
+            "blockNumber": "Block Number",
+            "timestamp_readable": "Timestamp",
+            "collateralVault": "Collateral Vault",
+            "liquidator": "Liquidator",
+            "srcAddress": "Source Address"
+        })
+        
+        # Convert timestamp to string for better display
+        liq_df_display["Timestamp"] = liq_df_display["Timestamp"].dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+        
+        liq_columns = [{"name": c, "id": c} for c in liq_df_display.columns]
+        liq_data = liq_df_display.to_dict("records")
+    else:
+        liq_columns = []
+        liq_data = []
+
     # --------------------------------------------------------------------------
     last_updated_text = f"Last updated: {dt.datetime.now(dt.UTC).strftime('%Y-%m-%d %H:%M:%S')} UTC"
 
@@ -639,6 +734,9 @@ def refresh_dashboard(_):
         iv_data,
         iv_columns,
         iv_fig,
+        liquidations_summary,
+        liq_data,
+        liq_columns,
         last_updated_text,
     )
 
