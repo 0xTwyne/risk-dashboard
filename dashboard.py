@@ -22,7 +22,7 @@ load_dotenv()
 #  your container.
 ###############################################################################
 
-API_ENDPOINT: str = "https://indexer.dev.hyperindex.xyz/235f163/v1/graphql"
+API_ENDPOINT: str = "https://indexer.dev.hyperindex.xyz/657ca84/v1/graphql"
 # HASURA_ADMIN_SECRET: Optional[str] = os.getenv("HASURA_GRAPHQL_ADMIN_SECRET", "testing")
 
 # Basic-auth credentials for the dashboard itself (UI access)
@@ -342,7 +342,7 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         target_aggregator = target_vault_info.get("aggregator")
         target_price = latest_prices.get(target_aggregator, 0.0) if target_aggregator else 0.0
         
-        total_borrowed_scaled = _scale_by_decimals(row["totalBorrowed"], target_decimals)
+        total_borrowed_scaled = max(0, _scale_by_decimals(row["totalBorrowed"], target_decimals))
         total_borrowed_usd = total_borrowed_scaled * target_price
         
         # Process totalCredit (uses intermediate vault's asset)
