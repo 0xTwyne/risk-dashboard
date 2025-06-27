@@ -334,7 +334,7 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         collateral_aggregator = collateral_asset_info.get("aggregator")
         collateral_price = latest_prices.get(collateral_aggregator, 0.0) if collateral_aggregator else 0.0
         
-        total_supplied_scaled = _scale_by_decimals(row["totalSupplied"], collateral_decimals)
+        total_supplied_scaled = max(0, _scale_by_decimals(row["totalSupplied"], collateral_decimals))
         total_supplied_usd = total_supplied_scaled * collateral_price
         
         # Process totalBorrowed (uses target vault's asset)  
@@ -350,7 +350,7 @@ def fetch_latest_collateral_vaults() -> pd.DataFrame:
         intermediate_aggregator = intermediate_vault_info.get("aggregator")
         intermediate_price = latest_prices.get(intermediate_aggregator, 0.0) if intermediate_aggregator else 0.0
         
-        total_credit_scaled = _scale_by_decimals(row["totalCredit"], intermediate_decimals)
+        total_credit_scaled = max(0, _scale_by_decimals(row["totalCredit"], intermediate_decimals))
         total_credit_usd = total_credit_scaled * intermediate_price
         
         # Process twyneLiqLTV (typically scaled by 4 decimals, representing percentage)
@@ -432,6 +432,7 @@ def fetch_latest_intermediate_vaults() -> pd.DataFrame:
     
     # Calculate utilization based on scaled values
     df["utilization"] = df["totalBorrowed_scaled"] / df["totalSupplied_scaled"].replace(0, pd.NA)
+    print(f"Fetched {len(df)} intermediate vaults")
     
     return df
 
