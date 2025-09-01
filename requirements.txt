@@ -1,0 +1,21 @@
+# Core dependencies
+dash==2.18.2
+dash-bootstrap-components==1.6.0
+plotly==5.24.1
+pandas==2.2.3
+requests==2.32.3
+pydantic==2.10.3
+python-dotenv==1.0.1
+
+# Utilities
+tenacity==9.0.0
+
+# Development dependencies
+pytest==8.3.4
+pytest-cov==6.0.0
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+
+# Optional performance enhancements
+orjson==3.10.12  # Fast JSON parsing
