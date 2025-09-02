@@ -45,6 +45,12 @@ class CollateralVaultsSnapshotsResponse(BaseAPIResponse):
     filters: Optional[Dict[str, Any]] = None
 
 
+class CollateralVaultHistoryResponse(BaseAPIResponse):
+    """Response model for collateral vault history."""
+    vaultAddress: str
+    snapshots: List[CollateralVaultSnapshot]
+
+
 class CollateralVault(BaseModel):
     """Model for created collateral vault."""
     vaultAddress: str

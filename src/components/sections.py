@@ -98,6 +98,7 @@ def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
         row = {
             "Chain ID": snapshot.chainId,
             "Vault Address": snapshot.vaultAddress[:10] + "..." if len(snapshot.vaultAddress) > 10 else snapshot.vaultAddress,
+            "Full Vault Address": snapshot.vaultAddress,  # Store full address for navigation
             "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
             "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
             "Max Release (USD)": max_release_usd,
@@ -108,7 +109,8 @@ def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
             "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
             "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
             "Block Number": int(snapshot.blockNumber),
-            "Block Timestamp": datetime.fromtimestamp(int(snapshot.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S")
+            "Block Timestamp": datetime.fromtimestamp(int(snapshot.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
+            "Actions": f"[More](/collateralVaults/{snapshot.vaultAddress})"
         }
         table_data.append(row)
     
@@ -135,7 +137,8 @@ def get_table_columns() -> List[Dict[str, str]]:
         {"name": "Can Liquidate", "id": "Can Liquidate"},
         {"name": "Externally Liquidated", "id": "Externally Liquidated"},
         {"name": "Block Number", "id": "Block Number", "type": "numeric"},
-        {"name": "Block Timestamp", "id": "Block Timestamp"}
+        {"name": "Block Timestamp", "id": "Block Timestamp"},
+        {"name": "Actions", "id": "Actions", "presentation": "markdown"}
     ]
 
 

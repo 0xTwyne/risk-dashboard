@@ -15,6 +15,7 @@ from config import Config
 from .models import (
     CollateralVaultsSnapshotsResponse,
     CollateralVaultsResponse,
+    CollateralVaultHistoryResponse,
     ExternalLiquidationsResponse,
     InternalLiquidationsResponse,
     EVaultMetricsResponse,
@@ -213,6 +214,77 @@ class APIClient:
             return CollateralVaultsResponse(**data)
         except Exception as e:
             logger.error(f"Failed to get collateral vaults: {e}")
+            return {"error": str(e)}
+    
+    def get_collateral_vault_history(
+        self,
+        address: str,
+        limit: int = 100,
+        offset: int = 0,
+        start_block: Optional[int] = None,
+        end_block: Optional[int] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None
+    ) -> Union[CollateralVaultHistoryResponse, Dict[str, str]]:
+        """
+        Get historical snapshots for a specific collateral vault.
+        
+        Args:
+            address: Collateral vault address
+            limit: Number of results to return
+            offset: Number of results to skip
+            start_block: Start block number filter
+            end_block: End block number filter
+            start_time: Start time filter (Unix timestamp)
+            end_time: End time filter (Unix timestamp)
+            
+        Returns:
+            API response or error dict
+        """
+        params = {"limit": limit, "offset": offset}
+        
+        if start_block is not None:
+            params["startBlock"] = start_block
+        
+        if end_block is not None:
+            params["endBlock"] = end_block
+        
+        if start_time is not None:
+            params["startTime"] = start_time
+        
+        if end_time is not None:
+            params["endTime"] = end_time
+        
+        try:
+            # Build URL with address parameter
+            url = self.config.get_api_url("collateral_vault_history", address=address)
+            
+            logger.info(f"Making GET request to {url}")
+            logger.debug(f"Request params: {params}")
+            
+            start_time = time.time()
+            response = self.session.request(
+                method="GET",
+                url=url,
+                params=params,
+                timeout=self.config.API_TIMEOUT
+            )
+            request_duration = time.time() - start_time
+            
+            logger.info(f"Request completed in {request_duration:.2f}s - Status: {response.status_code}")
+            
+            # Check for HTTP errors
+            response.raise_for_status()
+            
+            # Parse JSON response
+            data = response.json()
+            logger.info(f"Response data size: {len(str(data))} characters")
+            
+            if "error" in data:
+                return data
+            return CollateralVaultHistoryResponse(**data)
+        except Exception as e:
+            logger.error(f"Failed to get collateral vault history for {address}: {e}")
             return {"error": str(e)}
     
     def get_external_liquidations(

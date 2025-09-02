@@ -9,20 +9,20 @@ def query_vault_metrics(local=False):
         base_url = "http://localhost:8787"
         api_key = ""
     else:
-        base_url = "https://cdf169f4ba-7e35903394.idx.sim.io/"
+        base_url = "https://cdf169f4ba-7e35903394.idx.sim.io"
         api_key = "sim_vBwrxOq53ZmlslKyIzJFFVY9KBYQL3fi"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
     eeusdc = "0x9b58505aaa6e15d6a3cb15f533634332a60f29d1"
-    collateral_vault_address = "0xFEB0AE773F2f24Fb1e01F6816Ed936c5c24aA8F1"
+    collateral_vault_address =  "0xFEB0AE773F2f24Fb1e01F6816Ed936c5c24aA8F1"
     
     # Query parameters
     params = {
         "limit": 1,
         "offset": 0,
-        "chainIds": [1],  # Default to Ethereum mainnet
+        "chainIds": [8453],  # Default to Ethereum mainnet
         # Optional filters - uncomment and modify as needed:
         # "startBlock": "18000000",
         # "endBlock": "19000000", 
@@ -33,12 +33,12 @@ def query_vault_metrics(local=False):
     try:
         # Make the request
         # url = f"{base_url}/api/health"
-        url = f"{base_url}/api/evaults/latest"
+        # url = f"{base_url}/api/evaults/latest"
         # url = f"{base_url}/api/evault/{eeusdc}/metrics"
         # url = f"{base_url}/api/collateralVaults"
         # url = f"{base_url}/api/collateralVaults/latest-snapshots"
         # url = f"{base_url}/api/collateralVaults/{collateral_vault_address}/latest-snapshot"
-        # url = f"{base_url}/api/collateralVaults/{collateral_vault_address}/history"
+        url = f"{base_url}/api/collateralVaults/{collateral_vault_address}/history"
         # url = f"{base_url}/api/collateralVaults/external-liquidations"
         # url = f"{base_url}/api/collateralVaults/internal-liquidations"
         response = requests.get(url, params=params, headers=headers)
