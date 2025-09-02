@@ -54,6 +54,8 @@ app.layout = html.Div([
 logger.info("Registering dashboard pages...")
 import pages.home
 import pages.collateral_vaults
+import pages.evaults
+import pages.evault_detail
 logger.info("Pages registered successfully")
 
 # Run the app

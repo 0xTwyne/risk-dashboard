@@ -131,6 +131,7 @@ class InternalLiquidationsResponse(BaseAPIResponse):
 
 class EVaultMetric(BaseModel):
     """Model for EVault metric."""
+    chainId: str
     vaultAddress: str
     totalAssets: str
     totalAssetsUsd: str

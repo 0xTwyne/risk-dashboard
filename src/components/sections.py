@@ -168,9 +168,109 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
     )
 
 
+def fetch_evaults_data() -> Dict[str, Any]:
+    """
+    Fetch EVault metrics and return summary data.
+    
+    Returns:
+        Dict containing metrics or error information
+    """
+    try:
+        logger.info("Fetching EVaults latest metrics...")
+        
+        # Fetch data using the API client
+        response = api_client.get_evaults_latest()
+        
+        if isinstance(response, dict) and "error" in response:
+            logger.error(f"API error: {response['error']}")
+            return {
+                "error": response["error"],
+                "total_vaults": 0,
+                "metrics": []
+            }
+        
+        # Extract metrics from successful response
+        metrics = response.latestMetrics or []
+        total_vaults = len(metrics)
+        
+        logger.info(f"Successfully processed {total_vaults} EVault metrics")
+        
+        return {
+            "error": None,
+            "total_vaults": total_vaults,
+            "metrics": metrics
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch EVaults data: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "total_vaults": 0,
+            "metrics": []
+        }
+
+
+def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
+    """
+    Format EVaultMetric objects for table display.
+    
+    Args:
+        metrics: List of EVaultMetric objects
+        
+    Returns:
+        List of dictionaries formatted for DataTable
+    """
+    if not metrics:
+        return []
+    
+    table_data = []
+    for metric in metrics:
+        # Calculate utilization rate
+        total_assets = float(metric.totalAssets) if metric.totalAssets != "0" else 0.0
+        total_borrows = float(metric.totalBorrows) if metric.totalBorrows != "0" else 0.0
+        utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
+        
+        # Convert metric to dictionary and format values
+        row = {
+            "Chain ID": metric.chainId,
+            "Vault Address": metric.vaultAddress[:10] + "..." if len(metric.vaultAddress) > 10 else metric.vaultAddress,
+            "Full Vault Address": metric.vaultAddress,  # Store full address for navigation
+            "Total Assets": f"{total_assets:,.4f}",
+            "Total Assets (USD)": f"${float(metric.totalAssetsUsd):,.2f}" if metric.totalAssetsUsd != "0" else "$0.00",
+            "Total Borrows": f"{total_borrows:,.4f}",
+            "Utilization Rate (%)": f"{utilization_rate:.2f}%",
+            "Block Number": metric.blockNumber,
+            "Block Timestamp": datetime.fromtimestamp(int(metric.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
+            "Actions": f"[More](/evaults/{metric.vaultAddress})"
+        }
+        table_data.append(row)
+    
+    return table_data
+
+
+def get_evaults_table_columns() -> List[Dict[str, str]]:
+    """
+    Get column definitions for the EVaults table.
+    
+    Returns:
+        List of column definitions for DataTable
+    """
+    return [
+        {"name": "Chain ID", "id": "Chain ID"},
+        {"name": "Vault Address", "id": "Vault Address"},
+        {"name": "Total Assets", "id": "Total Assets", "type": "numeric"},
+        {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric"},
+        {"name": "Total Borrows", "id": "Total Borrows", "type": "numeric"},
+        {"name": "Utilization Rate (%)", "id": "Utilization Rate (%)", "type": "numeric"},
+        {"name": "Block Number", "id": "Block Number", "type": "numeric"},
+        {"name": "Block Timestamp", "id": "Block Timestamp"},
+        {"name": "Actions", "id": "Actions", "presentation": "markdown"}
+    ]
+
+
 def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
     """
-    Create the EVaults section component (placeholder for now).
+    Create the EVaults section component.
     
     Args:
         section_id: Unique ID for the section
@@ -178,14 +278,31 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
     Returns:
         EVaults section component
     """
+    refresh_button = dbc.Button(
+        [html.I(className="fas fa-sync-alt me-2"), "Refresh"],
+        id=f"{section_id}-refresh",
+        color="outline-primary",
+        size="sm"
+    )
+    
     return SectionCard(
         title="EVaults",
         icon="fas fa-coins",
+        action_button=refresh_button,
         children=[
+            # Metrics container
+            html.Div(id=f"{section_id}-metrics", className="mb-3"),
+            
+            # Status message container
+            html.Div(id=f"{section_id}-status", className="mb-3"),
+            
+            # Table container
+            html.Div(id=f"{section_id}-table", className="mb-3"),
+            
+            # Last updated info
             html.Div([
-                html.P("EVaults metrics coming soon...", className="text-muted text-center p-4"),
-                html.I(className="fas fa-tools fa-2x text-muted")
-            ], className="text-center")
+                html.Small(id=f"{section_id}-last-updated", className="text-muted")
+            ], className="text-end")
         ]
     )
 
@@ -314,6 +431,172 @@ def update_collateral_metrics(n_clicks, pathname):
             table_component = html.Div([
                 html.H5("Collateral Vaults Snapshots", className="mb-3"),
                 html.P("No snapshot data available", className="text-muted text-center p-4")
+            ])
+    
+    # Last updated timestamp
+    last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+    
+    return metrics_cards, status_message, table_component, last_updated
+
+
+# Callback for EVaults section
+@callback(
+    [Output("evaults-section-metrics", "children"),
+     Output("evaults-section-status", "children"),
+     Output("evaults-section-table", "children"),
+     Output("evaults-section-last-updated", "children")],
+    [Input("evaults-section-refresh", "n_clicks"),
+     Input("url", "pathname")],
+    prevent_initial_call=False
+)
+def update_evaults_metrics(n_clicks, pathname):
+    """
+    Update the EVaults metrics and table.
+    
+    Args:
+        n_clicks: Number of times refresh button was clicked
+        pathname: Current URL path
+        
+    Returns:
+        Tuple of (metrics_cards, status_message, table_component, last_updated_text)
+    """
+    # Only update if we're on the EVaults page
+    if pathname != "/evaults":
+        return [], "", "", ""
+    
+    logger.info("Updating EVaults metrics...")
+    
+    # Fetch the data
+    data = fetch_evaults_data()
+    
+    # Create status message
+    if data["error"]:
+        status_message = ErrorAlert(
+            message=f"Failed to fetch data: {data['error']}",
+            title="API Error"
+        )
+        metrics_cards = []
+        table_component = ErrorState(
+            error_message="Unable to load table data due to API error",
+            retry_callback="evaults-section-refresh"
+        )
+    else:
+        status_message = dbc.Alert(
+            "Data loaded successfully", 
+            color="success",
+            dismissable=True,
+            duration=3000  # Auto-dismiss after 3 seconds
+        )
+        
+        # Calculate summary metrics
+        total_assets_usd = sum(float(m.totalAssetsUsd) for m in data["metrics"] if m.totalAssetsUsd != "0")
+        total_borrows_sum = sum(float(m.totalBorrows) for m in data["metrics"] if m.totalBorrows != "0")
+        avg_utilization = 0.0
+        if data["metrics"]:
+            utilization_rates = []
+            for m in data["metrics"]:
+                total_assets = float(m.totalAssets) if m.totalAssets != "0" else 0.0
+                total_borrows = float(m.totalBorrows) if m.totalBorrows != "0" else 0.0
+                if total_assets > 0:
+                    utilization_rates.append(total_borrows / total_assets * 100)
+            avg_utilization = sum(utilization_rates) / len(utilization_rates) if utilization_rates else 0.0
+        
+        # Create metrics cards
+        metrics_cards = dbc.Row([
+            dbc.Col([
+                MetricCard(
+                    title="Total Vaults", 
+                    value=str(data["total_vaults"]),
+                    icon="fas fa-coins",
+                    color="primary"
+                )
+            ], width=12, md=6, lg=3),
+            
+            dbc.Col([
+                MetricCard(
+                    title="Total Assets (USD)", 
+                    value=f"${total_assets_usd:,.2f}",
+                    icon="fas fa-dollar-sign",
+                    color="success"
+                )
+            ], width=12, md=6, lg=3),
+            
+            dbc.Col([
+                MetricCard(
+                    title="Total Borrows", 
+                    value=f"{total_borrows_sum:,.2f}",
+                    icon="fas fa-chart-line",
+                    color="info"
+                )
+            ], width=12, md=6, lg=3),
+            
+            dbc.Col([
+                MetricCard(
+                    title="Avg Utilization", 
+                    value=f"{avg_utilization:.2f}%",
+                    icon="fas fa-percentage",
+                    color="warning" if avg_utilization > 80 else "info"
+                )
+            ], width=12, md=6, lg=3)
+        ], className="g-3")
+        
+        # Create table component
+        if data["metrics"]:
+            table_data = format_evaults_for_table(data["metrics"])
+            table_component = html.Div([
+                html.H5("EVaults Metrics", className="mb-3"),
+                dash_table.DataTable(
+                    id="evaults-metrics-table",
+                    data=table_data,
+                    columns=get_evaults_table_columns(),
+                    page_size=20,
+                    sort_action="native",
+                    filter_action="native",
+                    style_cell={
+                        'textAlign': 'left',
+                        'padding': '12px',
+                        'fontFamily': 'Arial, sans-serif',
+                        'fontSize': '14px',
+                        'whiteSpace': 'normal',
+                        'height': 'auto'
+                    },
+                    style_header={
+                        'backgroundColor': 'rgb(230, 230, 230)',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_data_conditional=[
+                        {
+                            'if': {'row_index': 'odd'},
+                            'backgroundColor': 'rgb(248, 248, 248)'
+                        },
+                        {
+                            'if': {
+                                'filter_query': '{Utilization Rate (%)} > 80',
+                                'column_id': 'Utilization Rate (%)'
+                            },
+                            'backgroundColor': '#ffebee',
+                            'color': 'red'
+                        },
+                        {
+                            'if': {
+                                'filter_query': '{Utilization Rate (%)} > 90',
+                                'column_id': 'Utilization Rate (%)'
+                            },
+                            'backgroundColor': '#ffcdd2',
+                            'color': 'darkred',
+                            'fontWeight': 'bold'
+                        }
+                    ],
+                    style_table={'overflowX': 'auto'},
+                    export_format="csv",
+                    export_headers="display"
+                )
+            ])
+        else:
+            table_component = html.Div([
+                html.H5("EVaults Metrics", className="mb-3"),
+                html.P("No EVault metrics available", className="text-muted text-center p-4")
             ])
     
     # Last updated timestamp

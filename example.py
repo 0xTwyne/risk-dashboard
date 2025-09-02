@@ -20,7 +20,7 @@ def query_vault_metrics(local=False):
     
     # Query parameters
     params = {
-        "limit": 10,
+        "limit": 1,
         "offset": 0,
         "chainIds": [1],  # Default to Ethereum mainnet
         # Optional filters - uncomment and modify as needed:
@@ -32,8 +32,8 @@ def query_vault_metrics(local=False):
     
     try:
         # Make the request
-        url = f"{base_url}/api/health"
-        # url = f"{base_url}/api/evaults/latest"
+        # url = f"{base_url}/api/health"
+        url = f"{base_url}/api/evaults/latest"
         # url = f"{base_url}/api/evault/{eeusdc}/metrics"
         # url = f"{base_url}/api/collateralVaults"
         # url = f"{base_url}/api/collateralVaults/latest-snapshots"
@@ -62,4 +62,4 @@ def query_vault_metrics(local=False):
 
 # Execute the query
 if __name__ == "__main__":
-    result = query_vault_metrics(local=True)
+    result = query_vault_metrics(local=False)
