@@ -9,7 +9,7 @@ def query_vault_metrics(local=False):
         base_url = "http://localhost:8787"
         api_key = ""
     else:
-        base_url = "https://cdf169f4ba-7e35903394.idx.sim.io"
+        base_url = "https://cdf169f4ba-da7e71f265.idx.sim.io"
         api_key = "sim_vBwrxOq53ZmlslKyIzJFFVY9KBYQL3fi"
     headers = {
         "Content-Type": "application/json",

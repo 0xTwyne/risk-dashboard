@@ -142,6 +142,12 @@ class EVaultMetric(BaseModel):
     totalAssets: str
     totalAssetsUsd: str
     totalBorrows: str
+    totalBorrowsUsd: str
+    decimals: str
+    asset: str
+    interestRate: str
+    symbol: str
+    name: str
     blockNumber: str
     blockTimestamp: str
 

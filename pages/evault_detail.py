@@ -350,20 +350,32 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
         # Calculate current metrics from latest data point
         if data["metrics"]:
             latest_metric = max(data["metrics"], key=lambda x: int(x.blockTimestamp))
-            total_assets = float(latest_metric.totalAssets) if latest_metric.totalAssets != "0" else 0.0
-            total_borrows = float(latest_metric.totalBorrows) if latest_metric.totalBorrows != "0" else 0.0
+            
+            # Get decimals for proper scaling
+            decimals = int(latest_metric.decimals) if hasattr(latest_metric, 'decimals') and latest_metric.decimals != "0" else 18
+            scaling_factor = 10 ** decimals
+            
+            # Scale totalAssets and totalBorrows using decimals
+            total_assets = float(latest_metric.totalAssets) / scaling_factor if latest_metric.totalAssets != "0" else 0.0
+            total_borrows = float(latest_metric.totalBorrows) / scaling_factor if latest_metric.totalBorrows != "0" else 0.0
             current_utilization = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
             
-            # Scale totalAssetsUsd by 1e18 if needed
+            # Scale USD values by 1e18 if needed
             total_assets_usd_raw = float(latest_metric.totalAssetsUsd) if latest_metric.totalAssetsUsd != "0" else 0.0
             total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
+            
+            total_borrows_usd_raw = float(latest_metric.totalBorrowsUsd) if hasattr(latest_metric, 'totalBorrowsUsd') and latest_metric.totalBorrowsUsd != "0" else 0.0
+            total_borrows_usd = total_borrows_usd_raw / 1e18 if total_borrows_usd_raw > 1e12 else total_borrows_usd_raw
+            
+            # Format interest rate as percentage
+            interest_rate = float(latest_metric.interestRate) / 1e18 * 100 if hasattr(latest_metric, 'interestRate') and latest_metric.interestRate != "0" else 0.0
             
             # Create current metrics cards
             metrics_cards = dbc.Row([
                 dbc.Col([
                     MetricCard(
                         title="Total Assets", 
-                        value=f"{total_assets:,.4f}",
+                        value=f"{total_assets:,.4f} {getattr(latest_metric, 'symbol', '')}",
                         icon="fas fa-coins",
                         color="primary"
                     )
@@ -381,9 +393,27 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
                 dbc.Col([
                     MetricCard(
                         title="Total Borrows", 
-                        value=f"{total_borrows:,.4f}",
+                        value=f"{total_borrows:,.4f} {getattr(latest_metric, 'symbol', '')}",
                         icon="fas fa-chart-line",
                         color="info"
+                    )
+                ], width=12, md=6, lg=3),
+                
+                dbc.Col([
+                    MetricCard(
+                        title="Total Borrows (USD)", 
+                        value=f"${total_borrows_usd:,.2f}",
+                        icon="fas fa-dollar-sign",
+                        color="warning"
+                    )
+                ], width=12, md=6, lg=3),
+                
+                dbc.Col([
+                    MetricCard(
+                        title="Interest Rate", 
+                        value=f"{interest_rate:.2f}%",
+                        icon="fas fa-percent",
+                        color="secondary"
                     )
                 ], width=12, md=6, lg=3),
                 

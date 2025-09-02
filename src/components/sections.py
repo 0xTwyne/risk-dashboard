@@ -238,24 +238,39 @@ def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
     
     table_data = []
     for metric in metrics:
+        # Get decimals for proper scaling
+        decimals = int(metric.decimals) if metric.decimals != "0" else 18
+        scaling_factor = 10 ** decimals
+        
+        # Scale totalAssets and totalBorrows using decimals
+        total_assets = float(metric.totalAssets) / scaling_factor if metric.totalAssets != "0" else 0.0
+        total_borrows = float(metric.totalBorrows) / scaling_factor if metric.totalBorrows != "0" else 0.0
+        
         # Calculate utilization rate
-        total_assets = float(metric.totalAssets) if metric.totalAssets != "0" else 0.0
-        total_borrows = float(metric.totalBorrows) if metric.totalBorrows != "0" else 0.0
         utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
         
-        # Convert metric to dictionary and format values with proper scaling
-        # Scale totalAssetsUsd by 1e18 if it needs scaling (check if values are very large)
+        # Format USD values - scale by 1e18 if they are very large
         total_assets_usd_raw = float(metric.totalAssetsUsd) if metric.totalAssetsUsd != "0" else 0.0
-        # If the USD value is very large (> 1e12), it likely needs scaling by 1e18
         total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
+        
+        total_borrows_usd_raw = float(metric.totalBorrowsUsd) if metric.totalBorrowsUsd != "0" else 0.0
+        total_borrows_usd = total_borrows_usd_raw / 1e18 if total_borrows_usd_raw > 1e12 else total_borrows_usd_raw
+        
+        # Format interest rate as percentage
+        interest_rate = float(metric.interestRate) / 1e18 * 100 if metric.interestRate != "0" else 0.0
         
         row = {
             "Chain ID": metric.chainId,
             "Vault Address": metric.vaultAddress[:10] + "..." if len(metric.vaultAddress) > 10 else metric.vaultAddress,
             "Full Vault Address": metric.vaultAddress,  # Store full address for navigation
+            "Name": metric.name,
+            "Symbol": metric.symbol,
+            "Asset": metric.asset[:10] + "..." if len(metric.asset) > 10 else metric.asset,
             "Total Assets": total_assets,
             "Total Assets (USD)": total_assets_usd,
             "Total Borrows": total_borrows,
+            "Total Borrows (USD)": total_borrows_usd,
+            "Interest Rate (%)": interest_rate,
             "Utilization Rate (%)": utilization_rate,
             "Block Number": int(metric.blockNumber),
             "Block Timestamp": datetime.fromtimestamp(int(metric.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
@@ -276,9 +291,14 @@ def get_evaults_table_columns() -> List[Dict[str, str]]:
     return [
         {"name": "Chain ID", "id": "Chain ID"},
         {"name": "Vault Address", "id": "Vault Address"},
+        {"name": "Name", "id": "Name"},
+        {"name": "Symbol", "id": "Symbol"},
+        {"name": "Asset", "id": "Asset"},
         {"name": "Total Assets", "id": "Total Assets", "type": "numeric", "format": {"specifier": ",.4f"}},
         {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Total Borrows", "id": "Total Borrows", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Total Borrows (USD)", "id": "Total Borrows (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Interest Rate (%)", "id": "Interest Rate (%)", "type": "numeric", "format": {"specifier": ".2f"}},
         {"name": "Utilization Rate (%)", "id": "Utilization Rate (%)", "type": "numeric", "format": {"specifier": ".2f"}},
         {"name": "Block Number", "id": "Block Number", "type": "numeric"},
         {"name": "Block Timestamp", "id": "Block Timestamp"},
@@ -523,14 +543,22 @@ def update_evaults_metrics(n_clicks, pathname):
         
         # Calculate summary metrics with proper scaling
         total_assets_usd = 0.0
-        for m in data["metrics"]:
-            if m.totalAssetsUsd != "0":
-                usd_raw = float(m.totalAssetsUsd)
-                # Scale by 1e18 if value is very large
-                usd_scaled = usd_raw / 1e18 if usd_raw > 1e12 else usd_raw
-                total_assets_usd += usd_scaled
+        total_borrows_usd = 0.0
         
-        total_borrows_sum = sum(float(m.totalBorrows) for m in data["metrics"] if m.totalBorrows != "0")
+        for m in data["metrics"]:
+            # Sum total assets USD
+            if m.totalAssetsUsd != "0":
+                assets_usd_raw = float(m.totalAssetsUsd)
+                # Scale by 1e18 if value is very large
+                assets_usd_scaled = assets_usd_raw / 1e18 if assets_usd_raw > 1e12 else assets_usd_raw
+                total_assets_usd += assets_usd_scaled
+            
+            # Sum total borrows USD
+            if m.totalBorrowsUsd != "0":
+                borrows_usd_raw = float(m.totalBorrowsUsd)
+                # Scale by 1e18 if value is very large
+                borrows_usd_scaled = borrows_usd_raw / 1e18 if borrows_usd_raw > 1e12 else borrows_usd_raw
+                total_borrows_usd += borrows_usd_scaled
         avg_utilization = 0.0
         if data["metrics"]:
             utilization_rates = []
@@ -563,8 +591,8 @@ def update_evaults_metrics(n_clicks, pathname):
             
             dbc.Col([
                 MetricCard(
-                    title="Total Borrows", 
-                    value=f"{total_borrows_sum:,.2f}",
+                    title="Total Borrows (USD)", 
+                    value=f"${total_borrows_usd:,.2f}",
                     icon="fas fa-chart-line",
                     color="info"
                 )
