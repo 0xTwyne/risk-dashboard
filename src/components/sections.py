@@ -323,11 +323,39 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
         size="sm"
     )
     
+    # Vault type toggle component
+    vault_type_toggle = dbc.Row([
+        dbc.Col([
+            html.Label("Vault Type:", className="fw-bold mb-2"),
+            dbc.ButtonGroup([
+                dbc.Button(
+                    "Twyne",
+                    id=f"{section_id}-twyne-btn",
+                    color="primary",
+                    outline=False,
+                    size="sm"
+                ),
+                dbc.Button(
+                    "Euler", 
+                    id=f"{section_id}-euler-btn",
+                    color="primary",
+                    outline=True,
+                    size="sm"
+                )
+            ])
+        ], width="auto"),
+        # Store for the selected vault type
+        dcc.Store(id=f"{section_id}-vault-type", data="twyne")
+    ], className="mb-3", justify="start")
+    
     return SectionCard(
         title="EVaults",
         icon="fas fa-coins",
         action_button=refresh_button,
         children=[
+            # Vault type toggle
+            vault_type_toggle,
+            
             # Metrics container
             html.Div(id=f"{section_id}-metrics", className="mb-3"),
             
@@ -492,6 +520,70 @@ def update_collateral_metrics(n_clicks, pathname):
     return metrics_cards, status_message, table_component, last_updated
 
 
+# Callback for vault type toggle
+@callback(
+    [Output("evaults-section-vault-type", "data"),
+     Output("evaults-section-twyne-btn", "outline"),
+     Output("evaults-section-euler-btn", "outline")],
+    [Input("evaults-section-twyne-btn", "n_clicks"),
+     Input("evaults-section-euler-btn", "n_clicks")],
+    prevent_initial_call=True
+)
+def update_vault_type_toggle(twyne_clicks, euler_clicks):
+    """
+    Update the vault type selection based on button clicks.
+    
+    Args:
+        twyne_clicks: Number of clicks on Twyne button
+        euler_clicks: Number of clicks on Euler button
+        
+    Returns:
+        Tuple of (selected_type, twyne_outline, euler_outline)
+    """
+    # Determine which button was clicked
+    from dash import callback_context
+    ctx = callback_context
+    if not ctx.triggered:
+        return "twyne", False, True
+    
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    
+    if "twyne" in button_id:
+        return "twyne", False, True  # Twyne selected (not outlined), Euler not selected (outlined)
+    else:
+        return "euler", True, False  # Twyne not selected (outlined), Euler selected (not outlined)
+
+
+def filter_evaults_by_type(metrics: List, vault_type: str) -> List:
+    """
+    Filter EVault metrics by vault type based on symbol prefix.
+    
+    Args:
+        metrics: List of EVaultMetric objects
+        vault_type: Either "twyne" or "euler"
+        
+    Returns:
+        Filtered list of EVaultMetric objects
+    """
+    if not metrics:
+        return []
+    
+    filtered_metrics = []
+    for metric in metrics:
+        symbol = metric.symbol
+        
+        if vault_type == "twyne":
+            # Twyne vaults start with 'ee' (case-sensitive)
+            if symbol.startswith("ee"):
+                filtered_metrics.append(metric)
+        elif vault_type == "euler":
+            # Euler vaults start with 'e' but NOT 'ee' (case-sensitive)
+            if symbol.startswith("e") and not symbol.startswith("ee"):
+                filtered_metrics.append(metric)
+    
+    return filtered_metrics
+
+
 # Callback for EVaults section
 @callback(
     [Output("evaults-section-metrics", "children"),
@@ -499,15 +591,17 @@ def update_collateral_metrics(n_clicks, pathname):
      Output("evaults-section-table", "children"),
      Output("evaults-section-last-updated", "children")],
     [Input("evaults-section-refresh", "n_clicks"),
+     Input("evaults-section-vault-type", "data"),
      Input("url", "pathname")],
     prevent_initial_call=False
 )
-def update_evaults_metrics(n_clicks, pathname):
+def update_evaults_metrics(n_clicks, vault_type, pathname):
     """
     Update the EVaults metrics and table.
     
     Args:
         n_clicks: Number of times refresh button was clicked
+        vault_type: Selected vault type ("twyne" or "euler")
         pathname: Current URL path
         
     Returns:
@@ -541,11 +635,14 @@ def update_evaults_metrics(n_clicks, pathname):
             duration=3000  # Auto-dismiss after 3 seconds
         )
         
-        # Calculate summary metrics with proper scaling
+        # Filter metrics by vault type
+        filtered_metrics = filter_evaults_by_type(data["metrics"], vault_type)
+        
+        # Calculate summary metrics with proper scaling using filtered data
         total_assets_usd = 0.0
         total_borrows_usd = 0.0
         
-        for m in data["metrics"]:
+        for m in filtered_metrics:
             # Sum total assets USD
             if m.totalAssetsUsd != "0":
                 assets_usd_raw = float(m.totalAssetsUsd)
@@ -560,21 +657,24 @@ def update_evaults_metrics(n_clicks, pathname):
                 borrows_usd_scaled = borrows_usd_raw / 1e18 if borrows_usd_raw > 1e12 else borrows_usd_raw
                 total_borrows_usd += borrows_usd_scaled
         avg_utilization = 0.0
-        if data["metrics"]:
+        if filtered_metrics:
             utilization_rates = []
-            for m in data["metrics"]:
+            for m in filtered_metrics:
                 total_assets = float(m.totalAssets) if m.totalAssets != "0" else 0.0
                 total_borrows = float(m.totalBorrows) if m.totalBorrows != "0" else 0.0
                 if total_assets > 0:
                     utilization_rates.append(total_borrows / total_assets * 100)
             avg_utilization = sum(utilization_rates) / len(utilization_rates) if utilization_rates else 0.0
         
-        # Create metrics cards
+        # Create metrics cards using filtered data
+        filtered_vault_count = len(filtered_metrics)
+        vault_type_display = vault_type.capitalize()
+        
         metrics_cards = dbc.Row([
             dbc.Col([
                 MetricCard(
-                    title="Total Vaults", 
-                    value=str(data["total_vaults"]),
+                    title=f"{vault_type_display} Vaults", 
+                    value=str(filtered_vault_count),
                     icon="fas fa-coins",
                     color="primary"
                 )
@@ -608,11 +708,11 @@ def update_evaults_metrics(n_clicks, pathname):
             ], width=12, md=6, lg=3)
         ], className="g-3")
         
-        # Create table component
-        if data["metrics"]:
-            table_data = format_evaults_for_table(data["metrics"])
+        # Create table component using filtered data
+        if filtered_metrics:
+            table_data = format_evaults_for_table(filtered_metrics)
             table_component = html.Div([
-                html.H5("EVaults Metrics", className="mb-3"),
+                html.H5(f"{vault_type_display} EVaults Metrics", className="mb-3"),
                 dash_table.DataTable(
                     id="evaults-metrics-table",
                     data=table_data,
@@ -663,8 +763,8 @@ def update_evaults_metrics(n_clicks, pathname):
             ])
         else:
             table_component = html.Div([
-                html.H5("EVaults Metrics", className="mb-3"),
-                html.P("No EVault metrics available", className="text-muted text-center p-4")
+                html.H5(f"{vault_type_display} EVaults Metrics", className="mb-3"),
+                html.P(f"No {vault_type_display} EVault metrics available", className="text-muted text-center p-4")
             ])
     
     # Last updated timestamp
