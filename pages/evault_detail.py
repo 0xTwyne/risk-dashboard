@@ -354,6 +354,10 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
             total_borrows = float(latest_metric.totalBorrows) if latest_metric.totalBorrows != "0" else 0.0
             current_utilization = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
             
+            # Scale totalAssetsUsd by 1e18 if needed
+            total_assets_usd_raw = float(latest_metric.totalAssetsUsd) if latest_metric.totalAssetsUsd != "0" else 0.0
+            total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
+            
             # Create current metrics cards
             metrics_cards = dbc.Row([
                 dbc.Col([
@@ -368,7 +372,7 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
                 dbc.Col([
                     MetricCard(
                         title="Total Assets (USD)", 
-                        value=f"${float(latest_metric.totalAssetsUsd):,.2f}",
+                        value=f"${total_assets_usd:,.2f}",
                         icon="fas fa-dollar-sign",
                         color="success"
                     )

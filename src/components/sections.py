@@ -84,20 +84,30 @@ def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
     
     table_data = []
     for snapshot in snapshots:
-        # Convert snapshot to dictionary and format values
+        # Convert snapshot to dictionary and format values with proper scaling
+        # USD values need to be scaled by 1e18
+        max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
+        max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
+        total_assets_usd = float(snapshot.totalAssetsDepositedOrReservedUsd) / 1e18 if snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0
+        user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
+        
+        # Twyne LTV needs to be scaled by 1e4 and displayed as percentage
+        twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
+        twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
+        
         row = {
             "Chain ID": snapshot.chainId,
             "Vault Address": snapshot.vaultAddress[:10] + "..." if len(snapshot.vaultAddress) > 10 else snapshot.vaultAddress,
             "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
             "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
-            "Max Release (USD)": f"${float(snapshot.maxReleaseUsd):,.2f}" if snapshot.maxReleaseUsd != "0" else "$0.00",
-            "Max Repay (USD)": f"${float(snapshot.maxRepayUsd):,.2f}" if snapshot.maxRepayUsd != "0" else "$0.00",
-            "Total Assets (USD)": f"${float(snapshot.totalAssetsDepositedOrReservedUsd):,.2f}" if snapshot.totalAssetsDepositedOrReservedUsd != "0" else "$0.00",
-            "User Collateral (USD)": f"${float(snapshot.userOwnedCollateralUsd):,.2f}" if snapshot.userOwnedCollateralUsd != "0" else "$0.00",
-            "Twyne LTV": f"{float(snapshot.twyneLiqLtv):.4f}" if snapshot.twyneLiqLtv != "0" else "0.0000",
+            "Max Release (USD)": max_release_usd,
+            "Max Repay (USD)": max_repay_usd,
+            "Total Assets (USD)": total_assets_usd,
+            "User Collateral (USD)": user_collateral_usd,
+            "Twyne Liq LTV (%)": twyne_liq_ltv_percentage,
             "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
             "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
-            "Block Number": snapshot.blockNumber,
+            "Block Number": int(snapshot.blockNumber),
             "Block Timestamp": datetime.fromtimestamp(int(snapshot.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S")
         }
         table_data.append(row)
@@ -117,11 +127,11 @@ def get_table_columns() -> List[Dict[str, str]]:
         {"name": "Vault Address", "id": "Vault Address"},
         {"name": "Credit Vault", "id": "Credit Vault"},
         {"name": "Debt Vault", "id": "Debt Vault"},
-        {"name": "Max Release (USD)", "id": "Max Release (USD)", "type": "numeric"},
-        {"name": "Max Repay (USD)", "id": "Max Repay (USD)", "type": "numeric"},
-        {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric"},
-        {"name": "User Collateral (USD)", "id": "User Collateral (USD)", "type": "numeric"},
-        {"name": "Twyne LTV", "id": "Twyne LTV", "type": "numeric"},
+        {"name": "Max Release (USD)", "id": "Max Release (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Max Repay (USD)", "id": "Max Repay (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "User Collateral (USD)", "id": "User Collateral (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Twyne Liq LTV (%)", "id": "Twyne Liq LTV (%)", "type": "numeric", "format": {"specifier": ".2f"}},
         {"name": "Can Liquidate", "id": "Can Liquidate"},
         {"name": "Externally Liquidated", "id": "Externally Liquidated"},
         {"name": "Block Number", "id": "Block Number", "type": "numeric"},
@@ -230,16 +240,21 @@ def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
         total_borrows = float(metric.totalBorrows) if metric.totalBorrows != "0" else 0.0
         utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
         
-        # Convert metric to dictionary and format values
+        # Convert metric to dictionary and format values with proper scaling
+        # Scale totalAssetsUsd by 1e18 if it needs scaling (check if values are very large)
+        total_assets_usd_raw = float(metric.totalAssetsUsd) if metric.totalAssetsUsd != "0" else 0.0
+        # If the USD value is very large (> 1e12), it likely needs scaling by 1e18
+        total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
+        
         row = {
             "Chain ID": metric.chainId,
             "Vault Address": metric.vaultAddress[:10] + "..." if len(metric.vaultAddress) > 10 else metric.vaultAddress,
             "Full Vault Address": metric.vaultAddress,  # Store full address for navigation
-            "Total Assets": f"{total_assets:,.4f}",
-            "Total Assets (USD)": f"${float(metric.totalAssetsUsd):,.2f}" if metric.totalAssetsUsd != "0" else "$0.00",
-            "Total Borrows": f"{total_borrows:,.4f}",
-            "Utilization Rate (%)": f"{utilization_rate:.2f}%",
-            "Block Number": metric.blockNumber,
+            "Total Assets": total_assets,
+            "Total Assets (USD)": total_assets_usd,
+            "Total Borrows": total_borrows,
+            "Utilization Rate (%)": utilization_rate,
+            "Block Number": int(metric.blockNumber),
             "Block Timestamp": datetime.fromtimestamp(int(metric.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
             "Actions": f"[More](/evaults/{metric.vaultAddress})"
         }
@@ -258,10 +273,10 @@ def get_evaults_table_columns() -> List[Dict[str, str]]:
     return [
         {"name": "Chain ID", "id": "Chain ID"},
         {"name": "Vault Address", "id": "Vault Address"},
-        {"name": "Total Assets", "id": "Total Assets", "type": "numeric"},
-        {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric"},
-        {"name": "Total Borrows", "id": "Total Borrows", "type": "numeric"},
-        {"name": "Utilization Rate (%)", "id": "Utilization Rate (%)", "type": "numeric"},
+        {"name": "Total Assets", "id": "Total Assets", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Total Assets (USD)", "id": "Total Assets (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Total Borrows", "id": "Total Borrows", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Utilization Rate (%)", "id": "Utilization Rate (%)", "type": "numeric", "format": {"specifier": ".2f"}},
         {"name": "Block Number", "id": "Block Number", "type": "numeric"},
         {"name": "Block Timestamp", "id": "Block Timestamp"},
         {"name": "Actions", "id": "Actions", "presentation": "markdown"}
@@ -356,32 +371,47 @@ def update_collateral_metrics(n_clicks, pathname):
             duration=3000  # Auto-dismiss after 3 seconds
         )
         
+        # Calculate financial summary metrics
+        total_collateral_usd = 0.0
+        total_debt_usd = 0.0
+        total_credit_reserved_usd = 0.0
+        
+        for snapshot in data["snapshots"]:
+            # Scale USD values by 1e18 and sum them
+            user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
+            max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
+            max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
+            
+            total_collateral_usd += user_collateral_usd
+            total_debt_usd += max_repay_usd
+            total_credit_reserved_usd += max_release_usd
+        
         # Create metrics cards
         metrics_cards = dbc.Row([
             dbc.Col([
                 MetricCard(
-                    title="Unique Vaults", 
-                    value=str(data["unique_vaults"]),
-                    icon="fas fa-vault",
+                    title="Total Collateral", 
+                    value=f"${total_collateral_usd:,.2f}",
+                    icon="fas fa-coins",
                     color="primary"
                 )
             ], width=12, md=6, lg=4),
             
             dbc.Col([
                 MetricCard(
-                    title="Total Snapshots", 
-                    value=str(data["total_snapshots"]),
-                    icon="fas fa-camera",
-                    color="info"
+                    title="Total Debt", 
+                    value=f"${total_debt_usd:,.2f}",
+                    icon="fas fa-exclamation-triangle",
+                    color="warning"
                 )
             ], width=12, md=6, lg=4),
             
             dbc.Col([
                 MetricCard(
-                    title="API Status", 
-                    value="Connected" if not data["error"] else "Error",
-                    icon="fas fa-plug" if not data["error"] else "fas fa-exclamation-triangle",
-                    color="success" if not data["error"] else "danger"
+                    title="Total Credit Reserved", 
+                    value=f"${total_credit_reserved_usd:,.2f}",
+                    icon="fas fa-piggy-bank",
+                    color="success"
                 )
             ], width=12, md=6, lg=4)
         ], className="g-3")
@@ -488,8 +518,15 @@ def update_evaults_metrics(n_clicks, pathname):
             duration=3000  # Auto-dismiss after 3 seconds
         )
         
-        # Calculate summary metrics
-        total_assets_usd = sum(float(m.totalAssetsUsd) for m in data["metrics"] if m.totalAssetsUsd != "0")
+        # Calculate summary metrics with proper scaling
+        total_assets_usd = 0.0
+        for m in data["metrics"]:
+            if m.totalAssetsUsd != "0":
+                usd_raw = float(m.totalAssetsUsd)
+                # Scale by 1e18 if value is very large
+                usd_scaled = usd_raw / 1e18 if usd_raw > 1e12 else usd_raw
+                total_assets_usd += usd_scaled
+        
         total_borrows_sum = sum(float(m.totalBorrows) for m in data["metrics"] if m.totalBorrows != "0")
         avg_utilization = 0.0
         if data["metrics"]:
