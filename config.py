@@ -17,7 +17,7 @@ class Config:
     """Main configuration class for the dashboard."""
     
     # API Settings
-    API_BASE_URL: str = os.getenv("API_BASE_URL", "https://cdf169f4ba-da7e71f265.idx.sim.io")
+    API_BASE_URL: str = os.getenv("API_BASE_URL", "https://cdf169f4ba-main.idx.sim.io")
     API_KEY: str = os.getenv("API_KEY", "")
     API_TIMEOUT: int = int(os.getenv("API_TIMEOUT", "30"))
     API_MAX_RETRIES: int = int(os.getenv("API_MAX_RETRIES", "3"))
