@@ -61,6 +61,4 @@ logger.info("Pages registered successfully")
 # Run the app
 if __name__ == "__main__":
     logger.info("Starting Risk Dashboard application...")
-    logger.info(f"Debug mode: {config.DEBUG}")
-    logger.info(f"API Base URL: {config.API_BASE_URL}")
-    app.run(debug=True, host="0.0.0.0", port=8050)
+    app.run(debug=False, host="0.0.0.0", port=8050)
