@@ -86,7 +86,8 @@ def fetch_vault_history_data(
 
 def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
     """
-    Format CollateralVaultSnapshot objects for table display using new pricing mechanism.
+    Format CollateralVaultSnapshot objects for table display using original USD values.
+    For history table, we use the raw USD values as they were recorded historically.
     
     Args:
         snapshots: List of CollateralVaultSnapshot objects
@@ -97,14 +98,13 @@ def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
     if not snapshots:
         return []
     
-    # Calculate USD values using EVault pricing
-    enhanced_snapshots, _ = calculate_multiple_snapshots_usd_values(snapshots)
-    
-    # Format enhanced snapshots for table with history-specific columns
     table_data = []
-    for enhanced_snapshot in enhanced_snapshots:
-        snapshot = enhanced_snapshot['original_snapshot']
-        usd_values = enhanced_snapshot['calculated_usd_values']
+    for snapshot in snapshots:
+        # Use original USD values with proper scaling (1e18)
+        max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
+        max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
+        total_assets_usd = float(snapshot.totalAssetsDepositedOrReservedUsd) / 1e18 if snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0
+        user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
         
         # Format timestamp
         block_timestamp = datetime.fromtimestamp(
@@ -121,10 +121,10 @@ def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
             "Chain ID": snapshot.chainId,
             "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
             "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
-            "Max Release (USD)": usd_values.get('max_release_usd', 0.0),
-            "Max Repay (USD)": usd_values.get('max_repay_usd', 0.0),
-            "Total Assets (USD)": usd_values.get('total_assets_usd', 0.0),
-            "User Collateral (USD)": usd_values.get('user_collateral_usd', 0.0),
+            "Max Release (USD)": max_release_usd,
+            "Max Repay (USD)": max_repay_usd,
+            "Total Assets (USD)": total_assets_usd,
+            "User Collateral (USD)": user_collateral_usd,
             "Twyne Liq LTV (%)": twyne_liq_ltv_percentage,
             "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
             "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
