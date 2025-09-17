@@ -13,6 +13,12 @@ from src.api import api_client
 from .cards import MetricCard
 from .layouts import SectionCard, LoadingSpinner, ErrorAlert
 from .loading import LoadingState, ErrorState
+from src.utils.usd_calculations import (
+    calculate_multiple_snapshots_usd_values,
+    get_summary_metrics_from_snapshots,
+    format_enhanced_snapshots_for_table,
+    get_pricing_warnings_summary
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +44,24 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
                 "total_snapshots": 0
             }
         
-        # Extract metrics from successful response
+        # Extract snapshots from successful response
         snapshots = response.latestSnapshots
         total_snapshots = len(snapshots)
+        
+        if not snapshots:
+            logger.warning("No snapshots returned from API")
+            return {
+                "error": None,
+                "unique_vaults": 0,
+                "total_snapshots": 0,
+                "snapshots": [],
+                "enhanced_snapshots": [],
+                "summary_metrics": {},
+                "pricing_warnings": []
+            }
+        
+        # Calculate USD values using EVault pricing
+        enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(snapshots)
         
         # Count unique vault addresses
         unique_vault_addresses = set()
@@ -49,14 +70,20 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
         
         unique_vaults_count = len(unique_vault_addresses)
         
-        logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults")
+        # Calculate summary metrics from enhanced snapshots
+        summary_metrics = get_summary_metrics_from_snapshots(enhanced_snapshots)
+        
+        logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults with {len(pricing_warnings)} pricing warnings")
         
         return {
             "error": None,
             "unique_vaults": unique_vaults_count,
             "total_snapshots": total_snapshots,
             "total_unique_vaults": getattr(response, 'totalUniqueVaults', None),
-            "snapshots": snapshots
+            "snapshots": snapshots,  # Keep original for compatibility
+            "enhanced_snapshots": enhanced_snapshots,
+            "summary_metrics": summary_metrics,
+            "pricing_warnings": pricing_warnings
         }
         
     except Exception as e:
@@ -65,13 +92,16 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
             "error": str(e),
             "unique_vaults": 0,
             "total_snapshots": 0,
-            "snapshots": []
+            "snapshots": [],
+            "enhanced_snapshots": [],
+            "summary_metrics": {},
+            "pricing_warnings": []
         }
 
 
 def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
     """
-    Format CollateralVaultSnapshot objects for table display.
+    Format CollateralVaultSnapshot objects for table display using new pricing mechanism.
     
     Args:
         snapshots: List of CollateralVaultSnapshot objects
@@ -82,39 +112,11 @@ def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
     if not snapshots:
         return []
     
-    table_data = []
-    for snapshot in snapshots:
-        # Convert snapshot to dictionary and format values with proper scaling
-        # USD values need to be scaled by 1e18
-        max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
-        max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
-        total_assets_usd = float(snapshot.totalAssetsDepositedOrReservedUsd) / 1e18 if snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0
-        user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
-        
-        # Twyne LTV needs to be scaled by 1e4 and displayed as percentage
-        twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
-        twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
-        
-        row = {
-            "Chain ID": snapshot.chainId,
-            "Vault Address": snapshot.vaultAddress[:10] + "..." if len(snapshot.vaultAddress) > 10 else snapshot.vaultAddress,
-            "Full Vault Address": snapshot.vaultAddress,  # Store full address for navigation
-            "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
-            "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
-            "Max Release (USD)": max_release_usd,
-            "Max Repay (USD)": max_repay_usd,
-            "Total Assets (USD)": total_assets_usd,
-            "User Collateral (USD)": user_collateral_usd,
-            "Twyne Liq LTV (%)": twyne_liq_ltv_percentage,
-            "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
-            "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
-            "Block Number": int(snapshot.blockNumber),
-            "Block Timestamp": datetime.fromtimestamp(int(snapshot.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
-            "Actions": f"[More](/collateralVaults/{snapshot.vaultAddress})"
-        }
-        table_data.append(row)
+    # Calculate USD values using EVault pricing
+    enhanced_snapshots, _ = calculate_multiple_snapshots_usd_values(snapshots)
     
-    return table_data
+    # Format enhanced snapshots for table
+    return format_enhanced_snapshots_for_table(enhanced_snapshots)
 
 
 def get_table_columns() -> List[Dict[str, str]]:
@@ -415,34 +417,40 @@ def update_collateral_metrics(n_clicks, pathname):
             retry_callback="collateral-section-refresh"
         )
     else:
-        status_message = dbc.Alert(
-            "Data loaded successfully", 
-            color="success",
-            dismissable=True,
-            duration=3000  # Auto-dismiss after 3 seconds
-        )
+        # Create status message with pricing warnings if any
+        pricing_warning_summary = get_pricing_warnings_summary(data.get("pricing_warnings", []))
         
-        # Calculate financial summary metrics
-        total_collateral_usd = 0.0
-        total_debt_usd = 0.0
-        total_credit_reserved_usd = 0.0
+        if pricing_warning_summary:
+            status_message = html.Div([
+                dbc.Alert(
+                    "Data loaded successfully", 
+                    color="success",
+                    dismissable=True,
+                    duration=3000
+                ),
+                dbc.Alert(
+                    pricing_warning_summary,
+                    color="warning",
+                    dismissable=True
+                )
+            ])
+        else:
+            status_message = dbc.Alert(
+                "Data loaded successfully", 
+                color="success",
+                dismissable=True,
+                duration=3000
+            )
         
-        for snapshot in data["snapshots"]:
-            # Scale USD values by 1e18 and sum them
-            user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
-            max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
-            max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
-            
-            total_collateral_usd += user_collateral_usd
-            total_debt_usd += max_repay_usd
-            total_credit_reserved_usd += max_release_usd
+        # Use calculated summary metrics from enhanced snapshots
+        summary_metrics = data.get("summary_metrics", {})
         
-        # Create metrics cards
+        # Create metrics cards using calculated values
         metrics_cards = dbc.Row([
             dbc.Col([
                 MetricCard(
                     title="Total Collateral", 
-                    value=f"${total_collateral_usd:,.2f}",
+                    value=f"${summary_metrics.get('total_user_collateral_usd', 0.0):,.2f}",
                     icon="fas fa-coins",
                     color="primary"
                 )
@@ -451,7 +459,7 @@ def update_collateral_metrics(n_clicks, pathname):
             dbc.Col([
                 MetricCard(
                     title="Total Debt", 
-                    value=f"${total_debt_usd:,.2f}",
+                    value=f"${summary_metrics.get('total_max_repay_usd', 0.0):,.2f}",
                     icon="fas fa-exclamation-triangle",
                     color="warning"
                 )
@@ -460,7 +468,7 @@ def update_collateral_metrics(n_clicks, pathname):
             dbc.Col([
                 MetricCard(
                     title="Total Credit Reserved", 
-                    value=f"${total_credit_reserved_usd:,.2f}",
+                    value=f"${summary_metrics.get('total_max_release_usd', 0.0):,.2f}",
                     icon="fas fa-piggy-bank",
                     color="success"
                 )
@@ -468,8 +476,8 @@ def update_collateral_metrics(n_clicks, pathname):
         ], className="g-3")
         
         # Create table component
-        if data["snapshots"]:
-            table_data = format_snapshots_for_table(data["snapshots"])
+        if data.get("enhanced_snapshots"):
+            table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"])
             table_component = html.Div([
                 html.H5("Collateral Vaults Snapshots", className="mb-3"),
                 dash_table.DataTable(

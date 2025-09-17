@@ -12,6 +12,11 @@ import dash_bootstrap_components as dbc
 
 from src.components import PageContainer, SectionCard, MetricCard, LoadingState, ErrorState, ErrorAlert
 from src.api import api_client
+from src.utils.usd_calculations import (
+    calculate_multiple_snapshots_usd_values,
+    format_enhanced_snapshots_for_table,
+    get_pricing_warnings_summary
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -81,7 +86,7 @@ def fetch_vault_history_data(
 
 def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
     """
-    Format CollateralVaultSnapshot objects for table display.
+    Format CollateralVaultSnapshot objects for table display using new pricing mechanism.
     
     Args:
         snapshots: List of CollateralVaultSnapshot objects
@@ -92,29 +97,34 @@ def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
     if not snapshots:
         return []
     
+    # Calculate USD values using EVault pricing
+    enhanced_snapshots, _ = calculate_multiple_snapshots_usd_values(snapshots)
+    
+    # Format enhanced snapshots for table with history-specific columns
     table_data = []
-    for snapshot in snapshots:
-        # Convert snapshot to dictionary and format values with proper scaling
-        # USD values need to be scaled by 1e18
-        max_release_usd = float(snapshot.maxReleaseUsd) / 1e18 if snapshot.maxReleaseUsd != "0" else 0.0
-        max_repay_usd = float(snapshot.maxRepayUsd) / 1e18 if snapshot.maxRepayUsd != "0" else 0.0
-        total_assets_usd = float(snapshot.totalAssetsDepositedOrReservedUsd) / 1e18 if snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0
-        user_collateral_usd = float(snapshot.userOwnedCollateralUsd) / 1e18 if snapshot.userOwnedCollateralUsd != "0" else 0.0
+    for enhanced_snapshot in enhanced_snapshots:
+        snapshot = enhanced_snapshot['original_snapshot']
+        usd_values = enhanced_snapshot['calculated_usd_values']
         
-        # Twyne LTV needs to be scaled by 1e4 and displayed as percentage
+        # Format timestamp
+        block_timestamp = datetime.fromtimestamp(
+            int(snapshot.blockTimestamp)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Format Twyne LTV as percentage
         twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
         twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
         
         row = {
             "Block Number": int(snapshot.blockNumber),
-            "Block Timestamp": datetime.fromtimestamp(int(snapshot.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
+            "Block Timestamp": block_timestamp,
             "Chain ID": snapshot.chainId,
             "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
             "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
-            "Max Release (USD)": max_release_usd,
-            "Max Repay (USD)": max_repay_usd,
-            "Total Assets (USD)": total_assets_usd,
-            "User Collateral (USD)": user_collateral_usd,
+            "Max Release (USD)": usd_values.get('max_release_usd', 0.0),
+            "Max Repay (USD)": usd_values.get('max_repay_usd', 0.0),
+            "Total Assets (USD)": usd_values.get('total_assets_usd', 0.0),
+            "User Collateral (USD)": usd_values.get('user_collateral_usd', 0.0),
             "Twyne Liq LTV (%)": twyne_liq_ltv_percentage,
             "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
             "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
@@ -371,24 +381,49 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
         start_date_str = datetime.fromtimestamp(start_time).strftime("%Y-%m-%d")
         end_date_str = datetime.fromtimestamp(end_time).strftime("%Y-%m-%d")
         
-        status_message = dbc.Alert(
-            f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
-            color="success",
-            dismissable=True,
-            duration=4000
-        )
+        # Calculate USD values using new pricing mechanism
+        enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(data["snapshots"])
         
-        # Calculate current metrics from latest data point
-        if data["snapshots"]:
+        # Create status message with pricing warnings if any
+        pricing_warning_summary = get_pricing_warnings_summary(pricing_warnings)
+        
+        if pricing_warning_summary:
+            status_message = html.Div([
+                dbc.Alert(
+                    f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
+                    color="success",
+                    dismissable=True,
+                    duration=4000
+                ),
+                dbc.Alert(
+                    pricing_warning_summary,
+                    color="warning",
+                    dismissable=True
+                )
+            ])
+        else:
+            status_message = dbc.Alert(
+                f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
+                color="success",
+                dismissable=True,
+                duration=4000
+            )
+        
+        # Calculate current metrics from latest enhanced snapshot
+        if enhanced_snapshots:
             # Sort by block number descending to get latest
-            sorted_snapshots = sorted(data["snapshots"], key=lambda x: int(x.blockNumber), reverse=True)
-            latest_snapshot = sorted_snapshots[0]
+            sorted_enhanced = sorted(enhanced_snapshots, key=lambda x: int(x['original_snapshot'].blockNumber), reverse=True)
+            latest_enhanced = sorted_enhanced[0]
+            latest_snapshot = latest_enhanced['original_snapshot']
+            latest_usd_values = latest_enhanced['calculated_usd_values']
             
-            # Calculate metrics from latest snapshot
-            max_release_usd = float(latest_snapshot.maxReleaseUsd) / 1e18 if latest_snapshot.maxReleaseUsd != "0" else 0.0
-            max_repay_usd = float(latest_snapshot.maxRepayUsd) / 1e18 if latest_snapshot.maxRepayUsd != "0" else 0.0
-            total_assets_usd = float(latest_snapshot.totalAssetsDepositedOrReservedUsd) / 1e18 if latest_snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0
-            user_collateral_usd = float(latest_snapshot.userOwnedCollateralUsd) / 1e18 if latest_snapshot.userOwnedCollateralUsd != "0" else 0.0
+            # Get calculated USD values
+            max_release_usd = latest_usd_values.get('max_release_usd', 0.0)
+            max_repay_usd = latest_usd_values.get('max_repay_usd', 0.0)
+            total_assets_usd = latest_usd_values.get('total_assets_usd', 0.0)
+            user_collateral_usd = latest_usd_values.get('user_collateral_usd', 0.0)
+            
+            # Calculate Twyne LTV percentage
             twyne_liq_ltv_decimal = float(latest_snapshot.twyneLiqLtv) / 1e4 if latest_snapshot.twyneLiqLtv != "0" else 0.0
             twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
             
@@ -415,6 +450,14 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
                         value=f"${total_assets_usd:,.2f}",
                         icon="fas fa-coins",
                         color="info"
+                    )
+                ], width=12, md=6, lg=3),
+                dbc.Col([
+                    MetricCard(
+                        title="User Collateral (USD)",
+                        value=f"${user_collateral_usd:,.2f}",
+                        icon="fas fa-wallet",
+                        color="secondary"
                     )
                 ], width=12, md=6, lg=3),
                 dbc.Col([
