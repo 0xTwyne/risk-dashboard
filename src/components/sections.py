@@ -19,6 +19,11 @@ from src.utils.usd_calculations import (
     format_enhanced_snapshots_for_table,
     get_pricing_warnings_summary
 )
+from src.utils.health_factor import (
+    calculate_health_factors_for_snapshots,
+    get_health_factor_summary_stats
+)
+from .charts import create_health_factor_scatter_plot
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +176,9 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
             
             # Status message container
             html.Div(id=f"{section_id}-status", className="mb-3"),
+            
+            # Health Factor Chart container
+            html.Div(id=f"{section_id}-health-chart", className="mb-4"),
             
             # Table container
             html.Div(id=f"{section_id}-table", className="mb-3"),
@@ -379,6 +387,7 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
 @callback(
     [Output("collateral-section-metrics", "children"),
      Output("collateral-section-status", "children"),
+     Output("collateral-section-health-chart", "children"),
      Output("collateral-section-table", "children"),
      Output("collateral-section-last-updated", "children")],
     [Input("collateral-section-refresh", "n_clicks"),
@@ -394,11 +403,11 @@ def update_collateral_metrics(n_clicks, pathname):
         pathname: Current URL path
         
     Returns:
-        Tuple of (metrics_cards, status_message, table_component, last_updated_text)
+        Tuple of (metrics_cards, status_message, health_chart, table_component, last_updated_text)
     """
     # Only update if we're on the collateral vaults page
     if pathname != "/collateralVaults":
-        return [], "", "", ""
+        return [], "", "", "", ""
     
     logger.info("Updating collateral vaults metrics...")
     
@@ -412,6 +421,9 @@ def update_collateral_metrics(n_clicks, pathname):
             title="API Error"
         )
         metrics_cards = []
+        health_chart = html.Div([
+            html.P("Health Factor chart unavailable due to API error", className="text-muted text-center p-4")
+        ])
         table_component = ErrorState(
             error_message="Unable to load table data due to API error",
             retry_callback="collateral-section-refresh"
@@ -475,6 +487,21 @@ def update_collateral_metrics(n_clicks, pathname):
             ], width=12, md=6, lg=4)
         ], className="g-3")
         
+        # Create health factor chart
+        enhanced_snapshots = data.get("enhanced_snapshots", [])
+        if enhanced_snapshots:
+            # Calculate health factors for chart
+            chart_data = calculate_health_factors_for_snapshots(enhanced_snapshots)
+            health_chart = html.Div([
+                html.H5("Health Factor Analysis", className="mb-3"),
+                create_health_factor_scatter_plot(chart_data, "Debt USD vs Health Factor")
+            ])
+        else:
+            health_chart = html.Div([
+                html.H5("Health Factor Analysis", className="mb-3"),
+                html.P("No data available for health factor analysis", className="text-muted text-center p-4")
+            ])
+        
         # Create table component
         if data.get("enhanced_snapshots"):
             table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"])
@@ -525,7 +552,7 @@ def update_collateral_metrics(n_clicks, pathname):
     # Last updated timestamp
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
     
-    return metrics_cards, status_message, table_component, last_updated
+    return metrics_cards, status_message, health_chart, table_component, last_updated
 
 
 # Callback for vault type toggle

@@ -4,7 +4,7 @@ from .cards import MetricCard, ClickableCard, InfoCard, StatusCard
 from .layouts import DashboardHeader, PageContainer, SectionCard, LoadingSpinner, ErrorAlert
 from .loading import LoadingState, ErrorState, EmptyState
 from .tables import DataTable, SimpleTable
-from .charts import create_line_chart, create_bar_chart, create_pie_chart
+from .charts import create_line_chart, create_bar_chart, create_pie_chart, create_health_factor_scatter_plot
 from .sections import CollateralVaultsSection, EVaultsSection
 
 __all__ = [
@@ -30,6 +30,7 @@ __all__ = [
     "create_line_chart",
     "create_bar_chart",
     "create_pie_chart",
+    "create_health_factor_scatter_plot",
     # Sections
     "CollateralVaultsSection",
     "EVaultsSection"
