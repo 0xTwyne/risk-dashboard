@@ -414,7 +414,7 @@ class APIClient:
             params["endTime"] = end_time
         
         try:
-            # Build URL with address parameter
+            # Build URL with address parameter  
             url = self.config.get_api_url("evault_metrics", address=address)
             
             logger.info(f"Making GET request to {url}")
@@ -437,6 +437,7 @@ class APIClient:
             # Parse JSON response
             data = response.json()
             logger.info(f"Response data size: {len(str(data))} characters")
+            logger.debug(f"Response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
             
             if "error" in data:
                 return data

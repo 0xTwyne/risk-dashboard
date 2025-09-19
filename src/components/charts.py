@@ -4,12 +4,52 @@ Reusable chart components for the Risk Dashboard.
 
 import logging
 from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta
+from collections import defaultdict
 from dash import html, dcc
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def aggregate_metrics_to_hourly_intervals(metrics: List) -> List:
+    """
+    Aggregate EVault metrics into 1-hour intervals by taking the latest metric
+    within each hour window.
+    
+    Args:
+        metrics: List of EVaultMetric objects
+        
+    Returns:
+        List of aggregated metrics (one per hour)
+    """
+    if not metrics:
+        return []
+    
+    # Sort metrics by timestamp
+    sorted_metrics = sorted(metrics, key=lambda x: int(x.blockTimestamp))
+    
+    # Group metrics by hour
+    hourly_groups = defaultdict(list)
+    
+    for metric in sorted_metrics:
+        timestamp = datetime.fromtimestamp(int(metric.blockTimestamp))
+        # Round down to the nearest hour
+        hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
+        hourly_groups[hour_key].append(metric)
+    
+    # Take the latest metric from each hour
+    aggregated_metrics = []
+    for hour_key in sorted(hourly_groups.keys()):
+        # Get the latest metric in this hour (highest timestamp)
+        hour_metrics = hourly_groups[hour_key]
+        latest_metric = max(hour_metrics, key=lambda x: int(x.blockTimestamp))
+        aggregated_metrics.append(latest_metric)
+    
+    logger.info(f"Aggregated {len(sorted_metrics)} metrics into {len(aggregated_metrics)} hourly intervals")
+    return aggregated_metrics
 
 
 def create_line_chart(
@@ -237,6 +277,150 @@ def create_health_factor_scatter_plot(
     fig.update_xaxes(
         range=[np.log10(max(min_debt * 0.5, 0.01)), np.log10(max_debt * 2)]
     )
+    
+    return dcc.Graph(
+        figure=fig,
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d']
+        }
+    )
+
+
+def create_multi_vault_utilization_chart(
+    vault_data: List[Dict[str, Any]],
+    title: str = ""
+) -> dcc.Graph:
+    """
+    Create a line chart showing utilization rates over time for multiple vaults.
+    Each vault gets a different color and appears in the legend.
+    
+    Args:
+        vault_data: List of dicts with keys:
+            - vault_address: str
+            - symbol: str  
+            - metrics: List of EVaultMetric objects
+        title: Chart title
+        
+    Returns:
+        Plotly graph component
+    """
+    if not vault_data:
+        # Return empty chart with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No vault data available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=16, color="gray")
+        )
+        fig.update_layout(
+            title=title,
+            template="plotly_white",
+            height=400
+        )
+        return dcc.Graph(figure=fig)
+    
+    # Create color palette for different vaults
+    colors = px.colors.qualitative.Set3
+    
+    fig = go.Figure()
+    
+    # Process each vault's data
+    for i, vault_info in enumerate(vault_data):
+        vault_address = vault_info.get('vault_address', 'Unknown')
+        symbol = vault_info.get('symbol', 'Unknown')
+        metrics = vault_info.get('metrics', [])
+        
+        if not metrics:
+            continue
+            
+        logger.info(f"Processing vault {symbol}: {len(metrics)} raw metrics")
+        
+        # Aggregate metrics to hourly intervals
+        aggregated_metrics = aggregate_metrics_to_hourly_intervals(metrics)
+        
+        # Calculate utilization rates and prepare data
+        timestamps = []
+        utilization_rates = []
+        
+        for metric in aggregated_metrics:
+            # Get decimals for proper scaling
+            decimals = int(metric.decimals) if hasattr(metric, 'decimals') and metric.decimals != "0" else 18
+            scaling_factor = 10 ** decimals
+            
+            # Scale totalAssets and totalBorrows using decimals
+            total_assets = float(metric.totalAssets) / scaling_factor if metric.totalAssets != "0" else 0.0
+            total_borrows = float(metric.totalBorrows) / scaling_factor if metric.totalBorrows != "0" else 0.0
+            
+            # Calculate utilization rate
+            utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
+            
+            timestamps.append(datetime.fromtimestamp(int(metric.blockTimestamp)))
+            utilization_rates.append(utilization_rate)
+        
+        if not timestamps:
+            continue
+        
+        # Log the date range for this vault
+        if timestamps:
+            start_date = min(timestamps)
+            end_date = max(timestamps)
+            logger.info(f"Vault {symbol} data range: {start_date} to {end_date} ({len(timestamps)} hourly points)")
+            
+        # Add trace for this vault
+        color = colors[i % len(colors)]
+        
+        # Use different modes based on data size for performance
+        mode = 'lines+markers' if len(timestamps) <= 100 else 'lines'
+        marker_size = 4 if len(timestamps) <= 100 else 2
+        
+        fig.add_trace(go.Scatter(
+            x=timestamps,
+            y=utilization_rates,
+            mode=mode,
+            name=symbol,
+            line=dict(color=color, width=2),
+            marker=dict(size=marker_size) if 'markers' in mode else None,
+            hovertemplate=f'<b>{symbol}</b><br>%{{y:.2f}}%<br>%{{x}}<extra></extra>',
+            connectgaps=True  # Connect gaps in data
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Utilization Rate (%)",
+        hovermode='x unified',
+        template='plotly_white',
+        height=500,
+        margin=dict(l=50, r=50, t=30, b=50),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
+        ),
+        # Add range selector for better navigation of extended timelines
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=24, label="24h", step="hour", stepmode="backward"),
+                    dict(count=7, label="7d", step="day", stepmode="backward"),
+                    dict(count=30, label="30d", step="day", stepmode="backward"),
+                    dict(step="all", label="All")
+                ])
+            ),
+            rangeslider=dict(visible=True),
+            type="date"
+        )
+    )
+    
+    # Ensure y-axis starts at 0
+    fig.update_yaxes(rangemode="tozero")
     
     return dcc.Graph(
         figure=fig,

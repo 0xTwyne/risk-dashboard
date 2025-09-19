@@ -25,7 +25,7 @@ from src.utils.health_factor import (
     get_health_factor_summary_stats
 )
 from src.utils.block_snapshot import format_block_snapshot_for_table
-from .charts import create_health_factor_scatter_plot
+from .charts import create_health_factor_scatter_plot, create_multi_vault_utilization_chart
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +339,105 @@ def fetch_evaults_data() -> Dict[str, Any]:
         }
 
 
+def fetch_evaults_historical_data(
+    vault_addresses: List[str], 
+    max_records_per_vault: int = 20000
+) -> List[Dict[str, Any]]:
+    """
+    Fetch ALL historical data for multiple EVaults using pagination.
+    
+    Args:
+        vault_addresses: List of vault addresses to fetch data for
+        max_records_per_vault: Maximum records to fetch per vault (safety limit)
+        
+    Returns:
+        List of dicts with vault_address, symbol, and metrics
+    """
+    vault_data = []
+    total_vaults = len(vault_addresses)
+    
+    logger.info(f"Fetching ALL historical data for {total_vaults} vaults (max {max_records_per_vault} records per vault)")
+    
+    for i, vault_address in enumerate(vault_addresses, 1):
+        try:
+            logger.info(f"Fetching historical data for vault {i}/{total_vaults}: {vault_address}")
+            
+            # Fetch all historical data using pagination
+            all_metrics = []
+            offset = 0
+            limit = 1000  # Maximum allowed by API
+            
+            while len(all_metrics) < max_records_per_vault:
+                logger.info(f"Fetching batch for {vault_address}: offset={offset}, limit={limit}")
+                
+                response = api_client.get_evault_metrics(
+                    address=vault_address,
+                    limit=limit,
+                    offset=offset
+                )
+                
+                if isinstance(response, dict) and "error" in response:
+                    logger.warning(f"Failed to fetch batch for vault {vault_address}: {response['error']}")
+                    break
+                
+                # Extract metrics from successful response
+                batch_metrics = response.metrics or []
+                total_count = getattr(response, 'totalCount', 0) or 0
+                current_count = getattr(response, 'count', len(batch_metrics)) or len(batch_metrics)
+                
+                logger.info(f"API Response - batch_metrics: {len(batch_metrics)}, totalCount: {total_count}, count: {current_count}")
+                logger.debug(f"Response object type: {type(response)}")
+                logger.debug(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                
+                if not batch_metrics:
+                    logger.info(f"No more metrics found for vault {vault_address} at offset {offset}")
+                    break
+                
+                all_metrics.extend(batch_metrics)
+                logger.info(f"Fetched {len(batch_metrics)} metrics, total so far: {len(all_metrics)}/{total_count if total_count > 0 else 'unknown'}")
+                
+                # Check if we've fetched all available data
+                # If totalCount is available and we've reached it, stop
+                if total_count > 0 and len(all_metrics) >= total_count:
+                    logger.info(f"Fetched all available data for vault {vault_address}: {len(all_metrics)}/{total_count} records")
+                    break
+                
+                # If we got fewer metrics than requested, we've reached the end
+                if len(batch_metrics) < limit:
+                    logger.info(f"Reached end of data for vault {vault_address}: got {len(batch_metrics)} < {limit} requested")
+                    break
+                
+                # Move to next batch
+                offset += limit
+                
+                # Safety check to prevent infinite loops
+                if len(all_metrics) >= max_records_per_vault:
+                    logger.warning(f"Reached maximum records limit ({max_records_per_vault}) for vault {vault_address}")
+                    break
+            
+            if not all_metrics:
+                logger.warning(f"No historical metrics found for vault {vault_address}")
+                continue
+            
+            # Get symbol from the first metric
+            symbol = all_metrics[0].symbol if all_metrics else "Unknown"
+            
+            vault_data.append({
+                "vault_address": vault_address,
+                "symbol": symbol,
+                "metrics": all_metrics
+            })
+            
+            logger.info(f"Successfully fetched {len(all_metrics)} historical metrics for vault {vault_address} ({symbol})")
+            
+        except Exception as e:
+            logger.error(f"Error fetching historical data for vault {vault_address}: {e}")
+            continue
+    
+    logger.info(f"Successfully fetched historical data for {len(vault_data)}/{total_vaults} vaults")
+    return vault_data
+
+
 def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
     """
     Format EVaultMetric objects for table display.
@@ -477,6 +576,9 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
             
             # Status message container
             html.Div(id=f"{section_id}-status", className="mb-3"),
+            
+            # Utilization chart container
+            html.Div(id=f"{section_id}-utilization-chart", className="mb-3"),
             
             # Table container
             html.Div(id=f"{section_id}-table", className="mb-3"),
@@ -758,6 +860,7 @@ def filter_evaults_by_type(metrics: List, vault_type: str) -> List:
 @callback(
     [Output("evaults-section-metrics", "children"),
      Output("evaults-section-status", "children"),
+     Output("evaults-section-utilization-chart", "children"),
      Output("evaults-section-table", "children"),
      Output("evaults-section-last-updated", "children")],
     [Input("evaults-section-refresh", "n_clicks"),
@@ -775,11 +878,11 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
         pathname: Current URL path
         
     Returns:
-        Tuple of (metrics_cards, status_message, table_component, last_updated_text)
+        Tuple of (metrics_cards, status_message, chart_component, table_component, last_updated_text)
     """
     # Only update if we're on the EVaults page
     if pathname != "/evaults":
-        return [], "", "", ""
+        return [], "", "", "", ""
     
     logger.info("Updating EVaults metrics...")
     
@@ -937,7 +1040,39 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                 html.P(f"No {vault_type_display} EVault metrics available", className="text-muted text-center p-4")
             ])
     
+    # Create utilization chart
+    chart_component = html.Div()
+    if filtered_metrics:
+        try:
+            # Get vault addresses for historical data fetch
+            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
+            
+            # Fetch historical data for all filtered vaults (get all available data)
+            vault_historical_data = fetch_evaults_historical_data(vault_addresses)
+            
+            if vault_historical_data:
+                chart_component = html.Div([
+                    html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
+                    create_multi_vault_utilization_chart(vault_historical_data)
+                ])
+            else:
+                chart_component = html.Div([
+                    html.H5(f"{vault_type_display} Vault Utilization Over Time", className="mb-3"),
+                    html.P("No historical data available for utilization chart", className="text-muted text-center p-4")
+                ])
+        except Exception as e:
+            logger.error(f"Error creating utilization chart: {e}")
+            chart_component = html.Div([
+                html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
+                html.P("Error loading utilization chart", className="text-muted text-center p-4")
+            ])
+    else:
+        chart_component = html.Div([
+            html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
+            html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
+        ])
+    
     # Last updated timestamp
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
     
-    return metrics_cards, status_message, table_component, last_updated
+    return metrics_cards, status_message, chart_component, table_component, last_updated
