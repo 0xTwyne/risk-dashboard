@@ -193,7 +193,8 @@ class APIClient:
     def get_collateral_vaults(
         self,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        block_number: Optional[int] = None
     ) -> Union[CollateralVaultsResponse, Dict[str, str]]:
         """
         Get all created collateral vaults.
@@ -201,11 +202,15 @@ class APIClient:
         Args:
             limit: Number of results to return
             offset: Number of results to skip
+            block_number: Filter vaults created up to this block number
             
         Returns:
             API response or error dict
         """
         params = {"limit": limit, "offset": offset}
+        
+        if block_number is not None:
+            params["endBlock"] = block_number
         
         try:
             data = self._make_request("GET", "collateral_vaults", params)

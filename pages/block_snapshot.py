@@ -173,36 +173,54 @@ def format_snapshot_metrics(summary: Dict[str, Any]) -> html.Div:
             dbc.Alert("No snapshot data available", color="warning")
         ])
     
-    return dbc.Row([
-        dbc.Col([
-            MetricCard(
-                title="Target Block",
-                value=f"{summary['target_block']:,}",
-                subtitle=f"Timestamp: {summary.get('formatted_timestamp', 'Unknown')}"
-            )
-        ], md=3),
-        dbc.Col([
-            MetricCard(
-                title="Successful Snapshots",
-                value=f"{summary['successful_snapshots']:,}",
-                subtitle=f"Out of {summary['total_vaults_discovered']:,} discovered vaults"
-            )
-        ], md=3),
-        dbc.Col([
-            MetricCard(
-                title="Total Assets",
-                value=f"${summary['total_assets_usd']:,.2f}",
-                subtitle="USD value at snapshot block"
-            )
-        ], md=3),
-        dbc.Col([
-            MetricCard(
-                title="Total Collateral",
-                value=f"${summary['total_user_collateral_usd']:,.2f}",
-                subtitle="User-owned collateral value"
-            )
-        ], md=3)
-    ], className="mb-4")
+    return html.Div([
+        dbc.Row([
+            dbc.Col([
+                MetricCard(
+                    title="Target Block",
+                    value=f"{summary['target_block']:,}",
+                    subtitle=f"Timestamp: {summary.get('formatted_timestamp', 'Unknown')}"
+                )
+            ], md=3),
+            dbc.Col([
+                MetricCard(
+                    title="Successful Snapshots",
+                    value=f"{summary['successful_snapshots']:,}",
+                    subtitle=f"Out of {summary['total_vaults_discovered']:,} discovered vaults"
+                )
+            ], md=3),
+            dbc.Col([
+                MetricCard(
+                    title="Total Assets",
+                    value=f"${summary['total_assets_usd']:,.2f}",
+                    subtitle="USD value at snapshot block"
+                )
+            ], md=3),
+            dbc.Col([
+                MetricCard(
+                    title="Total Collateral",
+                    value=f"${summary['total_user_collateral_usd']:,.2f}",
+                    subtitle="User-owned collateral value"
+                )
+            ], md=3)
+        ], className="mb-3"),
+        dbc.Row([
+            dbc.Col([
+                MetricCard(
+                    title="Total Credit",
+                    value=f"${summary['total_max_release_usd']:,.2f}",
+                    subtitle="Maximum releasable credit (USD)"
+                )
+            ], md=6),
+            dbc.Col([
+                MetricCard(
+                    title="Total Debt",
+                    value=f"${summary['total_max_repay_usd']:,.2f}",
+                    subtitle="Maximum repayable debt (USD)"
+                )
+            ], md=6)
+        ], className="mb-4")
+    ])
 
 
 def format_snapshot_table(block_snapshot) -> html.Div:
@@ -456,19 +474,25 @@ def compare_blocks(n_clicks, block1, block2):
                         html.H6(f"Block {block1:,}"),
                         html.P(f"Vaults: {summary1['successful_snapshots']:,}"),
                         html.P(f"Assets: ${summary1['total_assets_usd']:,.2f}"),
-                        html.P(f"Collateral: ${summary1['total_user_collateral_usd']:,.2f}")
+                        html.P(f"Collateral: ${summary1['total_user_collateral_usd']:,.2f}"),
+                        html.P(f"Credit: ${summary1['total_max_release_usd']:,.2f}"),
+                        html.P(f"Debt: ${summary1['total_max_repay_usd']:,.2f}")
                     ], md=4),
                     dbc.Col([
                         html.H6("Differences"),
                         html.P(f"Vault Change: {differences['vault_count_change']:+,}"),
                         html.P(f"Assets Change: ${differences['total_assets_change_usd']:+,.2f} ({differences['percentage_assets_change']:+.2f}%)"),
-                        html.P(f"Collateral Change: ${differences['total_collateral_change_usd']:+,.2f} ({differences['percentage_collateral_change']:+.2f}%)")
+                        html.P(f"Collateral Change: ${differences['total_collateral_change_usd']:+,.2f} ({differences['percentage_collateral_change']:+.2f}%)"),
+                        html.P(f"Credit Change: ${differences['total_credit_change_usd']:+,.2f} ({differences['percentage_credit_change']:+.2f}%)"),
+                        html.P(f"Debt Change: ${differences['total_debt_change_usd']:+,.2f} ({differences['percentage_debt_change']:+.2f}%)")
                     ], md=4),
                     dbc.Col([
                         html.H6(f"Block {block2:,}"),
                         html.P(f"Vaults: {summary2['successful_snapshots']:,}"),
                         html.P(f"Assets: ${summary2['total_assets_usd']:,.2f}"),
-                        html.P(f"Collateral: ${summary2['total_user_collateral_usd']:,.2f}")
+                        html.P(f"Collateral: ${summary2['total_user_collateral_usd']:,.2f}"),
+                        html.P(f"Credit: ${summary2['total_max_release_usd']:,.2f}"),
+                        html.P(f"Debt: ${summary2['total_max_repay_usd']:,.2f}")
                     ], md=4)
                 ])
             ])

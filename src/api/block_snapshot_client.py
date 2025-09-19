@@ -169,6 +169,8 @@ class BlockSnapshotClient:
             vault_diff = summary2['successful_snapshots'] - summary1['successful_snapshots']
             assets_diff = summary2['total_assets_usd'] - summary1['total_assets_usd']
             collateral_diff = summary2['total_user_collateral_usd'] - summary1['total_user_collateral_usd']
+            credit_diff = summary2['total_max_release_usd'] - summary1['total_max_release_usd']
+            debt_diff = summary2['total_max_repay_usd'] - summary1['total_max_repay_usd']
             
             return {
                 "block1": block1,
@@ -179,8 +181,12 @@ class BlockSnapshotClient:
                     "vault_count_change": vault_diff,
                     "total_assets_change_usd": assets_diff,
                     "total_collateral_change_usd": collateral_diff,
+                    "total_credit_change_usd": credit_diff,
+                    "total_debt_change_usd": debt_diff,
                     "percentage_assets_change": (assets_diff / summary1['total_assets_usd'] * 100) if summary1['total_assets_usd'] > 0 else 0,
-                    "percentage_collateral_change": (collateral_diff / summary1['total_user_collateral_usd'] * 100) if summary1['total_user_collateral_usd'] > 0 else 0
+                    "percentage_collateral_change": (collateral_diff / summary1['total_user_collateral_usd'] * 100) if summary1['total_user_collateral_usd'] > 0 else 0,
+                    "percentage_credit_change": (credit_diff / summary1['total_max_release_usd'] * 100) if summary1['total_max_release_usd'] > 0 else 0,
+                    "percentage_debt_change": (debt_diff / summary1['total_max_repay_usd'] * 100) if summary1['total_max_repay_usd'] > 0 else 0
                 },
                 "success": True
             }

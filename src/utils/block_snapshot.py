@@ -42,14 +42,18 @@ def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], Li
     try:
         logger.info(f"Discovering collateral vaults created up to block {target_block}")
         
-        # Fetch all created collateral vaults
-        # We'll use pagination to get all vaults
+        # Use the blockNumber parameter to let the API handle filtering server-side
+        # This is much more efficient than client-side filtering
         limit = 100
         offset = 0
         total_fetched = 0
         
         while True:
-            response = api_client.get_collateral_vaults(limit=limit, offset=offset)
+            response = api_client.get_collateral_vaults(
+                limit=limit, 
+                offset=offset, 
+                block_number=target_block
+            )
             
             if isinstance(response, dict) and "error" in response:
                 error_msg = f"Failed to fetch collateral vaults: {response['error']}"
@@ -61,16 +65,11 @@ def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], Li
             if not vaults:
                 break
             
-            # Filter vaults created up to target block
+            # Add all vault addresses (API already filtered by block number)
             for vault in vaults:
-                vault_block = int(vault.blockNumber)
-                if vault_block <= target_block:
-                    vault_addresses.add(vault.vaultAddress)
-                    total_fetched += 1
-                else:
-                    # Since vaults are likely ordered by creation time,
-                    # we can potentially break early here
-                    logger.debug(f"Vault {vault.vaultAddress} created at block {vault_block} > target {target_block}")
+                vault_addresses.add(vault.vaultAddress)
+                total_fetched += 1
+                logger.debug(f"Added vault {vault.vaultAddress} created at block {vault.blockNumber}")
             
             # Check if we got less than limit (last page)
             if len(vaults) < limit:
