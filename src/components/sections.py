@@ -10,6 +10,7 @@ from dash import html, dcc, callback, Output, Input, dash_table
 import dash_bootstrap_components as dbc
 
 from src.api import api_client
+from src.api.block_snapshot_client import block_snapshot_client
 from .cards import MetricCard
 from .layouts import SectionCard, LoadingSpinner, ErrorAlert
 from .loading import LoadingState, ErrorState
@@ -23,6 +24,7 @@ from src.utils.health_factor import (
     calculate_health_factors_for_snapshots,
     get_health_factor_summary_stats
 )
+from src.utils.block_snapshot import format_block_snapshot_for_table
 from .charts import create_health_factor_scatter_plot
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,110 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
             "enhanced_snapshots": [],
             "summary_metrics": {},
             "pricing_warnings": []
+        }
+
+
+def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
+    """
+    Fetch collateral vault snapshots at a specific block and return summary metrics.
+    
+    Args:
+        block_number: Block number to fetch data for
+        
+    Returns:
+        Dict containing metrics or error information
+    """
+    try:
+        logger.info(f"Fetching collateral vaults snapshots at block {block_number:,}...")
+        
+        # Create block snapshot using the block snapshot client
+        block_snapshot = block_snapshot_client.create_snapshot_at_block(block_number)
+        
+        if not block_snapshot or not hasattr(block_snapshot, 'vault_snapshots'):
+            logger.error(f"Failed to create block snapshot for block {block_number}")
+            return {
+                "error": "Failed to create block snapshot",
+                "unique_vaults": 0,
+                "total_snapshots": 0,
+                "snapshots": [],
+                "enhanced_snapshots": [],
+                "summary_metrics": {},
+                "pricing_warnings": []
+            }
+        
+        vault_snapshots = block_snapshot.vault_snapshots
+        total_snapshots = len(vault_snapshots)
+        
+        if not vault_snapshots:
+            logger.warning(f"No snapshots found for block {block_number}")
+            return {
+                "error": None,
+                "unique_vaults": 0,
+                "total_snapshots": 0,
+                "snapshots": [],
+                "enhanced_snapshots": [],
+                "summary_metrics": {},
+                "pricing_warnings": [],
+                "block_number": block_number,
+                "block_timestamp": block_snapshot.timestamp,
+                "is_historical": True
+            }
+        
+        # Convert block snapshot format to match the expected format
+        enhanced_snapshots = []
+        snapshots = []  # For compatibility
+        
+        for vault_snapshot in vault_snapshots:
+            enhanced_snapshot = {
+                'original_snapshot': vault_snapshot['original_snapshot'],
+                'calculated_usd_values': vault_snapshot['calculated_usd_values'],
+                'vault_address': vault_snapshot['vault_address'],
+                'credit_vault': vault_snapshot['credit_vault'],
+                'debt_vault': vault_snapshot['debt_vault'],
+                'has_pricing_errors': vault_snapshot['has_pricing_errors']
+            }
+            enhanced_snapshots.append(enhanced_snapshot)
+            snapshots.append(vault_snapshot['original_snapshot'])
+        
+        # Calculate summary metrics from enhanced snapshots
+        summary_metrics = get_summary_metrics_from_snapshots(enhanced_snapshots)
+        
+        # Collect pricing warnings
+        pricing_warnings = []
+        pricing_warnings.extend(block_snapshot.pricing_errors)
+        pricing_warnings.extend(block_snapshot.fetch_errors)
+        
+        unique_vaults_count = len(set(vs['vault_address'] for vs in vault_snapshots))
+        
+        logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults at block {block_number} with {len(pricing_warnings)} warnings")
+        
+        return {
+            "error": None,
+            "unique_vaults": unique_vaults_count,
+            "total_snapshots": total_snapshots,
+            "total_unique_vaults": block_snapshot.total_vaults,
+            "snapshots": snapshots,  # Keep original for compatibility
+            "enhanced_snapshots": enhanced_snapshots,
+            "summary_metrics": summary_metrics,
+            "pricing_warnings": pricing_warnings,
+            "block_number": block_number,
+            "block_timestamp": block_snapshot.timestamp,
+            "evault_prices_block": block_snapshot.evault_prices_block,
+            "is_historical": True
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch vault data at block {block_number}: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "unique_vaults": 0,
+            "total_snapshots": 0,
+            "snapshots": [],
+            "enhanced_snapshots": [],
+            "summary_metrics": {},
+            "pricing_warnings": [],
+            "block_number": block_number,
+            "is_historical": True
         }
 
 
@@ -391,16 +497,18 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
      Output("collateral-section-table", "children"),
      Output("collateral-section-last-updated", "children")],
     [Input("collateral-section-refresh", "n_clicks"),
-     Input("url", "pathname")],
+     Input("url", "pathname"),
+     Input("collateral-current-block", "data")],
     prevent_initial_call=False
 )
-def update_collateral_metrics(n_clicks, pathname):
+def update_collateral_metrics(n_clicks, pathname, selected_block):
     """
     Update the collateral vaults metrics and table.
     
     Args:
         n_clicks: Number of times refresh button was clicked
         pathname: Current URL path
+        selected_block: Block number to fetch data for (None for latest)
         
     Returns:
         Tuple of (metrics_cards, status_message, health_chart, table_component, last_updated_text)
@@ -409,10 +517,12 @@ def update_collateral_metrics(n_clicks, pathname):
     if pathname != "/collateralVaults":
         return [], "", "", "", ""
     
-    logger.info("Updating collateral vaults metrics...")
-    
-    # Fetch the data
-    data = fetch_collateral_vault_data()
+    if selected_block is not None:
+        logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
+        data = fetch_collateral_vault_data_at_block(selected_block)
+    else:
+        logger.info("Updating collateral vaults metrics (latest data)...")
+        data = fetch_collateral_vault_data()
     
     # Create status message
     if data["error"]:
@@ -432,27 +542,43 @@ def update_collateral_metrics(n_clicks, pathname):
         # Create status message with pricing warnings if any
         pricing_warning_summary = get_pricing_warnings_summary(data.get("pricing_warnings", []))
         
-        if pricing_warning_summary:
-            status_message = html.Div([
+        # Determine if this is historical data
+        is_historical = data.get("is_historical", False)
+        block_number = data.get("block_number")
+        block_timestamp = data.get("block_timestamp")
+        
+        success_alerts = []
+        
+        if is_historical and block_number:
+            formatted_timestamp = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S") if block_timestamp else "Unknown"
+            success_alerts.append(
                 dbc.Alert(
-                    "Data loaded successfully", 
+                    f"Historical snapshot loaded for block {block_number:,} ({formatted_timestamp})", 
+                    color="info",
+                    dismissable=True,
+                    duration=5000
+                )
+            )
+        else:
+            success_alerts.append(
+                dbc.Alert(
+                    "Latest data loaded successfully", 
                     color="success",
                     dismissable=True,
                     duration=3000
-                ),
+                )
+            )
+        
+        if pricing_warning_summary:
+            success_alerts.append(
                 dbc.Alert(
                     pricing_warning_summary,
                     color="warning",
                     dismissable=True
                 )
-            ])
-        else:
-            status_message = dbc.Alert(
-                "Data loaded successfully", 
-                color="success",
-                dismissable=True,
-                duration=3000
             )
+        
+        status_message = html.Div(success_alerts)
         
         # Use calculated summary metrics from enhanced snapshots
         summary_metrics = data.get("summary_metrics", {})
@@ -550,7 +676,16 @@ def update_collateral_metrics(n_clicks, pathname):
             ])
     
     # Last updated timestamp
-    last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+    is_historical = data.get("is_historical", False)
+    if is_historical:
+        block_number = data.get("block_number")
+        evault_prices_block = data.get("evault_prices_block")
+        if evault_prices_block and evault_prices_block != block_number:
+            last_updated = f"Historical snapshot at block {block_number:,} (prices from block {evault_prices_block:,}) - Updated: {datetime.now().strftime('%H:%M:%S')}"
+        else:
+            last_updated = f"Historical snapshot at block {block_number:,} - Updated: {datetime.now().strftime('%H:%M:%S')}"
+    else:
+        last_updated = f"Latest data - Updated: {datetime.now().strftime('%H:%M:%S')}"
     
     return metrics_cards, status_message, health_chart, table_component, last_updated
 
