@@ -1,45 +1,96 @@
-/* Custom CSS for Risk Dashboard */
+/* Twyne Risk Dashboard - Using Twyne Materials Design System */
 
-/* Global Styles */
+/* Import Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap');
+
+/* Global Styles - Twyne Design System */
 body {
-    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    background-color: #f8f9fa;
+    font-family: "Inter", sans-serif;
+    font-weight: 500;
+    font-size: 18px;
+    line-height: 1.3;
+    letter-spacing: 0.1px;
+    background-color: #C3C2E0; /* Twyne background color */
+    color: #2C2B55; /* Twyne primary text color */
+    margin: 0;
+    padding: 0;
 }
 
-/* Clickable Cards */
+html, body {
+    box-sizing: border-box;
+}
+
+*, *:before, *:after {
+    box-sizing: border-box;
+}
+
+/* Twyne Card Styles */
 .clickable-card {
     cursor: pointer;
-    transition: all 0.3s ease;
-    border-width: 2px;
+    transition: background-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+    border: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px;
+    background-color: #FFFFFF;
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
 }
 
 .clickable-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+    background-color: #F2F1F8; /* background[800] */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.1);
 }
 
-/* Vault Cards */
+/* Vault Cards - Twyne Section Style */
 .vault-card {
-    transition: all 0.3s ease;
+    transition: background-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
     cursor: pointer;
+    background-color: rgba(165, 163, 209, 0.1); /* background[500] with 10% opacity */
+    border: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px 12px 32px 32px; /* Twyne section style */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
+    padding: 12px 18px 16px;
 }
 
 .vault-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
+    background-color: rgba(165, 163, 209, 0.15);
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.1);
 }
 
-/* Data Tables */
+/* Twyne Tables */
 .dash-table-container {
-    font-family: inherit;
+    font-family: "Inter", sans-serif;
+    background: #FFFFFF;
+    border: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px 12px 32px 32px; /* Twyne table style */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
+    overflow: hidden;
 }
 
 .dash-spreadsheet-container .dash-spreadsheet-inner td {
-    font-family: inherit;
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    color: #2C2B55; /* background[200] */
+    border-color: #E4E4F1; /* background[700] */
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner th {
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: #8785C1; /* background[400] - secondary text */
+    background-color: #F2F1F8; /* background[800] */
+    border-color: #E4E4F1; /* background[700] */
 }
 
 .dash-table-container .dash-spreadsheet-inner td.focused {
-    background-color: rgba(0, 123, 255, 0.1) !important;
+    background-color: rgba(90, 84, 239, 0.1) !important; /* blue[200] with opacity */
+}
+
+.dash-table-container .dash-spreadsheet-inner tr:hover td {
+    background-color: rgba(165, 163, 209, 0.05); /* background[500] with light opacity */
 }
 
 /* Loading Spinner Overlay */
@@ -47,61 +98,212 @@ body {
     margin: auto;
 }
 
-/* Navigation */
+/* Twyne Navigation */
 .navbar {
-    box-shadow: 0 2px 4px rgba(0,0,0,.08);
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E4E4F1; /* background[700] */
 }
 
 .navbar-brand {
+    font-family: "Space Grotesk", sans-serif;
     font-weight: 700;
-    letter-spacing: -0.5px;
+    font-size: 24px;
+    letter-spacing: 0.1px;
+    color: #2C2B55; /* background[200] */
 }
 
-/* Breadcrumbs */
+.navbar-nav .nav-link {
+    font-family: "Inter", sans-serif;
+    font-weight: 500;
+    font-size: 16px;
+    color: #8785C1; /* background[400] - secondary text */
+    transition: color 200ms ease;
+}
+
+.navbar-nav .nav-link:hover,
+.navbar-nav .nav-link.active {
+    color: #2C2B55; /* background[200] */
+}
+
+/* Twyne Breadcrumbs */
 .breadcrumb {
     background-color: transparent;
     padding: 0;
     margin-bottom: 1rem;
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.breadcrumb-item {
+    color: #8785C1; /* background[400] - secondary text */
+}
+
+.breadcrumb-item.active {
+    color: #2C2B55; /* background[200] */
 }
 
 .breadcrumb-item + .breadcrumb-item::before {
     content: "›";
-    font-weight: bold;
+    font-weight: 600;
+    color: #8785C1; /* background[400] */
 }
 
-/* Cards */
+/* Twyne Cards */
 .card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px 12px 32px 32px;
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
+    background-color: #FFFFFF;
+    transition: background-color 200ms ease, box-shadow 200ms ease;
+}
+
+.card:hover {
+    background-color: #F2F1F8; /* background[800] */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.1);
 }
 
 .card-header {
+    font-family: "Inter", sans-serif;
     font-weight: 600;
-    border-bottom: 2px solid rgba(0, 0, 0, 0.06);
+    font-size: 18px;
+    color: #2C2B55; /* background[200] */
+    background-color: #F2F1F8; /* background[800] */
+    border-bottom: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px 12px 0 0;
 }
 
-/* Buttons */
+.card-body {
+    color: #2C2B55; /* background[200] */
+}
+
+/* Twyne Buttons */
 .btn {
+    font-family: "Inter", sans-serif;
     font-weight: 500;
-    letter-spacing: 0.025em;
-    transition: all 0.15s ease;
+    font-size: 12px;
+    line-height: 1.21;
+    letter-spacing: 0.1px;
+    border-radius: 24px;
+    padding: 0 16px;
+    height: 40px;
+    transition: background-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
 
 .btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
 }
 
-/* Alerts */
+.btn:active {
+    transform: translateY(1px);
+}
+
+/* Primary Button - Twyne Style */
+.btn-primary {
+    color: #FFFFFF;
+    background-color: #5A54EF; /* blue[200] */
+    box-shadow: 0px 0px 3px 0px #5A54EF, 0px 0px 0px 1px #5A54EF, 0px 1px 2px 0px rgba(90, 84, 239, 0.24);
+}
+
+.btn-primary:hover {
+    background-color: #5A54EF;
+    box-shadow: 0px 0px 3px 0px #5A54EF, 0px 0px 0px 1px #5A54EF, 0px 2px 4px 0px rgba(90, 84, 239, 0.32);
+}
+
+/* Secondary Button - Twyne Style */
+.btn-secondary {
+    color: #3C3A73; /* background[300] */
+    background-color: #C3C2E0; /* background[600] */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.1);
+}
+
+.btn-secondary:hover {
+    background-color: #A5A3D1; /* background[500] */
+}
+
+/* Ghost Button - Twyne Style */
+.btn-outline-primary {
+    color: #2C2B55; /* background[100] */
+    background-color: #FFFFFF;
+    border: 1px solid #F2F1F8; /* background[800] */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.1);
+}
+
+.btn-outline-primary:hover {
+    background-color: #F2F1F8; /* background[800] */
+    box-shadow: 0px 2px 48px 0px rgba(0, 0, 0, 0.15);
+}
+
+/* Twyne Alerts */
 .alert {
-    border-left-width: 4px;
-    border-left-style: solid;
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    border: 1px solid #E4E4F1; /* background[700] */
+    border-radius: 12px;
+    background-color: #FFFFFF;
+    color: #2C2B55; /* background[200] */
+    box-shadow: 0px 0px 20px 0px rgba(0, 0, 0, 0.05);
 }
 
-/* Badges */
+.alert-success {
+    background-color: rgba(255, 189, 0, 0.1); /* yellow[100] with opacity */
+    border-color: #FFBD00; /* yellow[100] */
+    color: #2C2B55;
+}
+
+.alert-warning {
+    background-color: rgba(255, 189, 0, 0.2); /* yellow[100] with opacity */
+    border-color: #FFBD00; /* yellow[100] */
+    color: #2C2B55;
+}
+
+.alert-danger {
+    background-color: rgba(255, 10, 10, 0.1); /* red[100] with opacity */
+    border-color: #FF0A0A; /* red[100] */
+    color: #2C2B55;
+}
+
+/* Twyne Badges */
 .badge {
-    font-weight: 500;
-    padding: 0.35em 0.65em;
+    font-family: "Inter", sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.1px;
+}
+
+.badge-primary {
+    background-color: #5A54EF; /* blue[200] */
+    color: #FFFFFF;
+}
+
+.badge-secondary {
+    background-color: #C3C2E0; /* background[600] */
+    color: #2C2B55; /* background[200] */
+}
+
+.badge-success {
+    background-color: #FFBD00; /* yellow[100] */
+    color: #2C2B55; /* background[200] */
+}
+
+.badge-warning {
+    background-color: #FFE8A7; /* yellow[200] */
+    color: #2C2B55; /* background[200] */
+}
+
+.badge-danger {
+    background-color: #FF0A0A; /* red[100] */
+    color: #FFFFFF;
 }
 
 /* Dropdowns */
