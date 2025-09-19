@@ -157,6 +157,11 @@ class EVaultMetricsResponse(BaseAPIResponse):
     vaultAddress: Optional[str] = None
     metrics: Optional[List[EVaultMetric]] = None
     latestMetrics: Optional[List[EVaultMetric]] = None
+    # Pagination fields
+    count: Optional[int] = None
+    totalCount: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
 
 
 class ChainlinkAnswer(BaseModel):
