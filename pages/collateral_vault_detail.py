@@ -12,11 +12,13 @@ import dash_bootstrap_components as dbc
 
 from src.components import PageContainer, SectionCard, MetricCard, LoadingState, ErrorState, ErrorAlert
 from src.api import api_client
+from src.api.block_snapshot_client import block_snapshot_client
 from src.utils.usd_calculations import (
     calculate_multiple_snapshots_usd_values,
     format_enhanced_snapshots_for_table,
     get_pricing_warnings_summary
 )
+from src.utils.block_snapshot import get_vault_snapshot_at_block
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -81,6 +83,130 @@ def fetch_vault_history_data(
         return {
             "error": str(e),
             "snapshots": []
+        }
+
+
+def fetch_vault_data_at_block(vault_address: str, block_number: int, existing_snapshots: List = None) -> Dict[str, Any]:
+    """
+    Fetch vault snapshot at a specific block by filtering existing historical data and repricing.
+    
+    Args:
+        vault_address: The vault address to fetch data for
+        block_number: Block number to fetch data for
+        existing_snapshots: List of existing historical snapshots to filter from
+        
+    Returns:
+        Dict containing snapshot data or error information
+    """
+    try:
+        logger.info(f"Finding snapshot for vault {vault_address} at block {block_number:,} from existing data")
+        
+        # If no existing snapshots provided, fetch all historical data first
+        if existing_snapshots is None:
+            logger.info("No existing snapshots provided, fetching all historical data first")
+            historical_data = fetch_vault_history_data(vault_address, limit=10000)  # Get all history
+            if historical_data["error"]:
+                return {
+                    "error": historical_data["error"],
+                    "snapshots": [],
+                    "block_number": block_number,
+                    "is_historical": True
+                }
+            existing_snapshots = historical_data["snapshots"]
+        
+        if not existing_snapshots:
+            return {
+                "error": f"No historical snapshots available for vault {vault_address}",
+                "snapshots": [],
+                "block_number": block_number,
+                "is_historical": True
+            }
+        
+        # Filter snapshots to find the latest one at or before the target block
+        valid_snapshots = [
+            snapshot for snapshot in existing_snapshots 
+            if int(snapshot.blockNumber) <= block_number
+        ]
+        
+        if not valid_snapshots:
+            return {
+                "error": f"No snapshots found for vault {vault_address} at or before block {block_number}",
+                "snapshots": [],
+                "block_number": block_number,
+                "is_historical": True
+            }
+        
+        # Get the latest snapshot (highest block number)
+        target_snapshot = max(valid_snapshots, key=lambda s: int(s.blockNumber))
+        snapshot_block = int(target_snapshot.blockNumber)
+        
+        logger.info(f"Found snapshot at block {snapshot_block} for target block {block_number}")
+        
+        # Get EVault prices at the target block for repricing
+        from src.utils.block_snapshot import get_evault_prices_at_block
+        evault_prices, prices_block, price_errors = get_evault_prices_at_block(block_number)
+        
+        if not evault_prices:
+            logger.warning(f"No EVault prices available for block {block_number}, using original USD values")
+            return {
+                "error": None,
+                "snapshots": [target_snapshot],
+                "vault_address": vault_address,
+                "block_number": block_number,
+                "snapshot_block": snapshot_block,
+                "is_historical": True,
+                "calculated_usd_values": {
+                    'max_release_usd': float(target_snapshot.maxReleaseUsd) / 1e6 if target_snapshot.maxReleaseUsd != "0" else 0.0,
+                    'max_repay_usd': float(target_snapshot.maxRepayUsd) / 1e6 if target_snapshot.maxRepayUsd != "0" else 0.0,
+                    'total_assets_usd': float(target_snapshot.totalAssetsDepositedOrReservedUsd) / 1e6 if target_snapshot.totalAssetsDepositedOrReservedUsd != "0" else 0.0,
+                    'user_collateral_usd': float(target_snapshot.userOwnedCollateralUsd) / 1e6 if target_snapshot.userOwnedCollateralUsd != "0" else 0.0
+                },
+                "evault_prices_block": None,
+                "warnings": [f"No EVault prices available for block {block_number}, using original USD values"] + price_errors
+            }
+        
+        # Get prices for this snapshot's credit and debt vaults
+        credit_vault = getattr(target_snapshot, 'creditVault', '')
+        debt_vault = getattr(target_snapshot, 'debtVault', '')
+        
+        credit_price = evault_prices.get(credit_vault, 0.0)
+        debt_price = evault_prices.get(debt_vault, 0.0)
+        
+        # Calculate USD values using historical prices
+        from src.utils.pricing import calculate_collateral_usd_values
+        usd_values, calc_errors = calculate_collateral_usd_values(
+            target_snapshot, credit_price, debt_price
+        )
+        
+        warnings = price_errors + calc_errors
+        if credit_price == 0.0:
+            warnings.append(f"No price available for credit vault {credit_vault}")
+        if debt_price == 0.0:
+            warnings.append(f"No price available for debt vault {debt_vault}")
+        
+        logger.info(f"Successfully repriced snapshot for vault {vault_address} at block {snapshot_block} using prices from block {prices_block}")
+        
+        return {
+            "error": None,
+            "snapshots": [target_snapshot],
+            "vault_address": vault_address,
+            "block_number": block_number,
+            "snapshot_block": snapshot_block,
+            "is_historical": True,
+            "calculated_usd_values": usd_values,
+            "evault_prices_block": prices_block,
+            "credit_price": credit_price,
+            "debt_price": debt_price,
+            "warnings": warnings
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch vault data at block {block_number} for {vault_address}: {e}")
+        return {
+            "error": str(e),
+            "snapshots": [],
+            "block_number": block_number,
+            "is_historical": True
         }
 
 
@@ -159,6 +285,54 @@ def get_history_table_columns() -> List[Dict[str, str]]:
     ]
 
 
+def create_block_input_section() -> dbc.Card:
+    """Create the block input section for historical snapshots."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H6("Data Source Selection", className="mb-0")
+        ]),
+        dbc.CardBody([
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label("Block Number (Optional)", html_for="vault-detail-block-input"),
+                    dbc.InputGroup([
+                        dbc.Input(
+                            id="vault-detail-block-input",
+                            type="number",
+                            placeholder="Enter block number for historical snapshot",
+                            min=1,
+                            step=1
+                        ),
+                        dbc.Button(
+                            "Use Latest",
+                            id="vault-detail-use-latest-btn",
+                            color="outline-secondary",
+                            n_clicks=0
+                        )
+                    ])
+                ], md=8),
+                dbc.Col([
+                    dbc.Label(" ", html_for="vault-detail-apply-block-btn"),
+                    dbc.Button(
+                        "Apply Block",
+                        id="vault-detail-apply-block-btn",
+                        color="primary",
+                        className="w-100"
+                    )
+                ], md=4)
+            ], className="mb-2"),
+            dbc.Row([
+                dbc.Col([
+                    html.Small([
+                        "Leave empty to use the latest vault data. ",
+                        "Enter a block number to view the vault's state at that specific block."
+                    ], className="text-muted")
+                ])
+            ])
+        ])
+    ], className="mb-3")
+
+
 def layout(vault_address: str = None):
     """
     Define the layout for the collateral vault detail page.
@@ -187,6 +361,9 @@ def layout(vault_address: str = None):
             # Store vault address for callbacks
             dcc.Store(id="collateral-vault-address-store", data=vault_address),
             
+            # Store for current block selection
+            dcc.Store(id="vault-detail-current-block", data=None),
+            
             # Back navigation
             html.Div([
                 dbc.Button(
@@ -209,6 +386,9 @@ def layout(vault_address: str = None):
                     html.Code(vault_address, className="bg-light p-1")
                 ], className="text-muted mb-4")
             ]),
+            
+            # Block input section
+            create_block_input_section(),
             
             # Metrics section
             SectionCard(
@@ -279,6 +459,43 @@ def layout(vault_address: str = None):
     )
 
 
+# Callback to handle block input changes
+@callback(
+    Output("vault-detail-current-block", "data"),
+    [Input("vault-detail-apply-block-btn", "n_clicks"),
+     Input("vault-detail-use-latest-btn", "n_clicks")],
+    [State("vault-detail-block-input", "value")],
+    prevent_initial_call=True
+)
+def update_vault_detail_block_selection(apply_clicks, latest_clicks, block_input):
+    """Update the current block selection for vault detail."""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return None
+    
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    
+    if trigger_id == "vault-detail-use-latest-btn":
+        return None  # None means use latest data
+    elif trigger_id == "vault-detail-apply-block-btn" and block_input:
+        return int(block_input)
+    
+    return None
+
+
+# Callback to clear block input when "Use Latest" is clicked
+@callback(
+    Output("vault-detail-block-input", "value"),
+    [Input("vault-detail-use-latest-btn", "n_clicks")],
+    prevent_initial_call=True
+)
+def clear_vault_detail_block_input(n_clicks):
+    """Clear the block input when Use Latest is clicked."""
+    if n_clicks:
+        return None
+    return dash.no_update
+
+
 # Callback for collateral vault detail page
 @callback(
     [Output("collateral-vault-detail-metrics", "children"),
@@ -290,14 +507,15 @@ def layout(vault_address: str = None):
      Input("collateral-apply-date-range", "n_clicks"),
      Input("collateral-7d-btn", "n_clicks"),
      Input("collateral-30d-btn", "n_clicks"),
-     Input("collateral-90d-btn", "n_clicks")],
+     Input("collateral-90d-btn", "n_clicks"),
+     Input("vault-detail-current-block", "data")],
     [State("collateral-vault-address-store", "data"),
      State("collateral-start-date-picker", "date"),
      State("collateral-end-date-picker", "date")],
     prevent_initial_call=False
 )
 def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n_clicks_7d, 
-                                 n_clicks_30d, n_clicks_90d, vault_address, start_date, end_date):
+                                 n_clicks_30d, n_clicks_90d, selected_block, vault_address, start_date, end_date):
     """
     Update the collateral vault detail metrics and history table.
     
@@ -308,6 +526,7 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
         n_clicks_7d: Number of times 7 days button was clicked
         n_clicks_30d: Number of times 30 days button was clicked
         n_clicks_90d: Number of times 90 days button was clicked
+        selected_block: Block number to fetch data for (None for latest)
         vault_address: Vault address from store
         start_date: Start date from date picker
         end_date: End date from date picker
@@ -318,9 +537,10 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
     if not vault_address or not pathname.startswith("/collateralVaults/"):
         return [], "", "", ""
     
-    logger.info(f"Updating collateral vault detail for {vault_address}...")
+    # First, always fetch all historical data for efficiency
+    logger.info(f"Fetching all historical data for vault {vault_address}...")
     
-    # Determine date range based on button clicks
+    # Determine date range for historical data
     ctx = dash.callback_context
     if ctx.triggered:
         trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
@@ -358,12 +578,21 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
         start_time = int((datetime.now() - timedelta(days=30)).timestamp())
     
     # Fetch the historical data with time filtering
-    data = fetch_vault_history_data(
+    historical_data = fetch_vault_history_data(
         vault_address, 
         limit=1000,  # Increase limit for historical data
         start_time=start_time,
         end_time=end_time
     )
+    
+    # Check if we should use a specific block or the historical data as-is
+    if selected_block is not None:
+        logger.info(f"Filtering for block {selected_block:,} and repricing...")
+        # Use the existing historical snapshots to find the right snapshot and reprice it
+        data = fetch_vault_data_at_block(vault_address, selected_block, historical_data.get("snapshots", []))
+    else:
+        logger.info(f"Using historical data from {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')} to {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')}")
+        data = historical_data
     
     # Create status message
     if data["error"]:
@@ -377,37 +606,90 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
             retry_callback="collateral-vault-detail-refresh"
         )
     else:
-        # Format date range for display
-        start_date_str = datetime.fromtimestamp(start_time).strftime("%Y-%m-%d")
-        end_date_str = datetime.fromtimestamp(end_time).strftime("%Y-%m-%d")
+        # Determine if this is block-specific data
+        is_historical = data.get("is_historical", False)
+        block_number = data.get("block_number")
         
-        # Calculate USD values using new pricing mechanism
-        enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(data["snapshots"])
-        
-        # Create status message with pricing warnings if any
-        pricing_warning_summary = get_pricing_warnings_summary(pricing_warnings)
-        
-        if pricing_warning_summary:
-            status_message = html.Div([
+        if is_historical and block_number:
+            # Block-specific data
+            snapshot_block = data.get("snapshot_block", block_number)
+            evault_prices_block = data.get("evault_prices_block")
+            formatted_timestamp = datetime.fromtimestamp(int(data["snapshots"][0].blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S") if data["snapshots"] else "Unknown"
+            
+            # Handle warnings from block snapshot
+            warnings = data.get("warnings", [])
+            pricing_warning_summary = "; ".join(warnings) if warnings else None
+            
+            success_alerts = []
+            
+            # Main success message with pricing block info
+            if evault_prices_block and evault_prices_block != snapshot_block:
+                success_message = f"Block snapshot loaded: Found snapshot at block {snapshot_block:,} ({formatted_timestamp}) with prices from block {evault_prices_block:,}"
+            else:
+                success_message = f"Block snapshot loaded: Found snapshot at block {snapshot_block:,} ({formatted_timestamp})"
+            
+            success_alerts.append(
                 dbc.Alert(
+                    success_message, 
+                    color="info",
+                    dismissable=True,
+                    duration=5000
+                )
+            )
+            
+            if pricing_warning_summary:
+                success_alerts.append(
+                    dbc.Alert(
+                        f"Warnings: {pricing_warning_summary}",
+                        color="warning",
+                        dismissable=True
+                    )
+                )
+            
+            status_message = html.Div(success_alerts)
+            
+            # For block data, use the properly calculated USD values from the block snapshot system
+            enhanced_snapshots = [{
+                'original_snapshot': data["snapshots"][0],
+                'calculated_usd_values': data.get("calculated_usd_values", {
+                    'max_release_usd': 0.0,
+                    'max_repay_usd': 0.0,
+                    'total_assets_usd': 0.0,
+                    'user_collateral_usd': 0.0
+                })
+            }] if data["snapshots"] else []
+        else:
+            # Historical date range data
+            start_date_str = datetime.fromtimestamp(start_time).strftime("%Y-%m-%d")
+            end_date_str = datetime.fromtimestamp(end_time).strftime("%Y-%m-%d")
+            
+            # Calculate USD values using new pricing mechanism
+            enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(data["snapshots"])
+            
+            # Create status message with pricing warnings if any
+            pricing_warning_summary = get_pricing_warnings_summary(pricing_warnings)
+            
+            if pricing_warning_summary:
+                status_message = html.Div([
+                    dbc.Alert(
+                        f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
+                        color="success",
+                        dismissable=True,
+                        duration=4000
+                    ),
+                    dbc.Alert(
+                        pricing_warning_summary,
+                        color="warning",
+                        dismissable=True
+                    )
+                ])
+            else:
+                status_message = dbc.Alert(
                     f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
                     color="success",
                     dismissable=True,
                     duration=4000
-                ),
-                dbc.Alert(
-                    pricing_warning_summary,
-                    color="warning",
-                    dismissable=True
                 )
-            ])
-        else:
-            status_message = dbc.Alert(
-                f"Loaded {len(data['snapshots'])} historical records from {start_date_str} to {end_date_str}", 
-                color="success",
-                dismissable=True,
-                duration=4000
-            )
         
         # Calculate current metrics from latest enhanced snapshot
         if enhanced_snapshots:
@@ -539,7 +821,20 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
             ])
     
     # Last updated timestamp
-    last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+    is_historical = data.get("is_historical", False)
+    if is_historical and data.get("block_number"):
+        block_number = data.get("block_number")
+        snapshot_block = data.get("snapshot_block", block_number)
+        evault_prices_block = data.get("evault_prices_block")
+        
+        if evault_prices_block and evault_prices_block != snapshot_block:
+            last_updated = f"Block snapshot at {snapshot_block:,} (prices from block {evault_prices_block:,}) - Updated: {datetime.now().strftime('%H:%M:%S')}"
+        elif snapshot_block != block_number:
+            last_updated = f"Block snapshot: requested {block_number:,}, found {snapshot_block:,} - Updated: {datetime.now().strftime('%H:%M:%S')}"
+        else:
+            last_updated = f"Block snapshot at block {block_number:,} - Updated: {datetime.now().strftime('%H:%M:%S')}"
+    else:
+        last_updated = f"Historical data - Updated: {datetime.now().strftime('%H:%M:%S')}"
     
     return metrics_cards, status_message, table_component, last_updated
 
