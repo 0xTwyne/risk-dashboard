@@ -461,6 +461,70 @@ class APIClient:
         except Exception as e:
             logger.error(f"Failed to get Chainlink latest: {e}")
             return {"error": str(e)}
+    
+    def get_gov_set_events(
+        self,
+        event_type: str,
+        vault_address: Optional[str] = None,
+        chain_ids: Optional[List[int]] = None,
+        limit: int = 10,
+        offset: int = 0
+    ) -> Union[Dict[str, Any], Dict[str, str]]:
+        """
+        Get governance parameter update events.
+        
+        Args:
+            event_type: Type of gov-set event (e.g., "gov-set-caps", "gov-set-ltv")
+            vault_address: Optional vault address filter
+            chain_ids: Optional list of chain IDs to filter
+            limit: Number of results to return
+            offset: Number of results to skip
+            
+        Returns:
+            API response or error dict
+        """
+        # Map event type to endpoint key
+        endpoint_map = {
+            "gov-set-caps": "gov_set_caps",
+            "gov-set-config-flags": "gov_set_config_flags",
+            "gov-set-fee-receiver": "gov_set_fee_receiver",
+            "gov-set-governor-admin": "gov_set_governor_admin",
+            "gov-set-hook-config": "gov_set_hook_config",
+            "gov-set-interest-fee": "gov_set_interest_fee",
+            "gov-set-interest-rate-model": "gov_set_interest_rate_model",
+            "gov-set-liquidation-cool-off-time": "gov_set_liquidation_cool_off_time",
+            "gov-set-ltv": "gov_set_ltv",
+            "gov-set-max-liquidation-discount": "gov_set_max_liquidation_discount"
+        }
+        
+        if event_type not in endpoint_map:
+            logger.error(f"Unknown gov-set event type: {event_type}")
+            return {"error": f"Unknown event type: {event_type}"}
+        
+        endpoint_key = endpoint_map[event_type]
+        
+        params = {"limit": min(limit, 100), "offset": offset}
+        
+        if vault_address:
+            params["vaultAddress"] = vault_address
+        
+        if chain_ids:
+            params["chainIds"] = ",".join(map(str, chain_ids))
+        
+        try:
+            logger.info(f"Fetching {event_type} events with params: {params}")
+            data = self._make_request("GET", endpoint_key, params)
+            
+            if "error" in data:
+                logger.error(f"API returned error for {event_type}: {data['error']}")
+                return data
+            
+            logger.info(f"Successfully fetched {len(data.get('events', []))} {event_type} events")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Failed to get {event_type} events: {e}", exc_info=True)
+            return {"error": str(e)}
 
 
 # Create singleton instance

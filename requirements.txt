@@ -19,3 +19,7 @@ mypy==1.13.0
 
 # Optional performance enhancements
 orjson==3.10.12  # Fast JSON parsing
+
+# Governance notification system
+eth-ape==0.8.0  # Blockchain interaction framework
+apprise==1.9.0  # Notification framework

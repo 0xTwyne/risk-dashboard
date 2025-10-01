@@ -53,7 +53,17 @@ class Config:
         "external_liquidations": "/api/collateralVaults/external-liquidations",
         "internal_liquidations": "/api/collateralVaults/internal-liquidations",
         "chainlink_latest": "/api/chainlink/latest-answers",
-        "health": "/api/health"
+        "health": "/api/health",
+        "gov_set_caps": "/api/gov-set-caps",
+        "gov_set_config_flags": "/api/gov-set-config-flags",
+        "gov_set_fee_receiver": "/api/gov-set-fee-receiver",
+        "gov_set_governor_admin": "/api/gov-set-governor-admin",
+        "gov_set_hook_config": "/api/gov-set-hook-config",
+        "gov_set_interest_fee": "/api/gov-set-interest-fee",
+        "gov_set_interest_rate_model": "/api/gov-set-interest-rate-model",
+        "gov_set_liquidation_cool_off_time": "/api/gov-set-liquidation-cool-off-time",
+        "gov_set_ltv": "/api/gov-set-ltv",
+        "gov_set_max_liquidation_discount": "/api/gov-set-max-liquidation-discount"
     }
     
     @classmethod
