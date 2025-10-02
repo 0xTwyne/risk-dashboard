@@ -4,6 +4,7 @@ Provides convenient methods to work with block snapshots.
 """
 
 import logging
+import asyncio
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 
@@ -23,7 +24,7 @@ class BlockSnapshotClient:
         self.api_client = api_client
         logger.info("BlockSnapshotClient initialized")
     
-    def create_snapshot_at_block(self, block_number: int) -> BlockSnapshot:
+    async def create_snapshot_at_block(self, block_number: int) -> BlockSnapshot:
         """
         Create a comprehensive snapshot of all collateral vaults at a specific block.
         
@@ -36,7 +37,7 @@ class BlockSnapshotClient:
         logger.info(f"Creating block snapshot for block {block_number}")
         
         try:
-            snapshot = create_block_snapshot(block_number)
+            snapshot = await create_block_snapshot(block_number)
             
             # Log summary
             summary = format_block_snapshot_summary(snapshot)
@@ -58,7 +59,7 @@ class BlockSnapshotClient:
                 evault_prices_block=None
             )
     
-    def get_snapshot_summary(self, block_number: int) -> Dict[str, Any]:
+    async def get_snapshot_summary(self, block_number: int) -> Dict[str, Any]:
         """
         Get a summary of the block snapshot without full vault details.
         
@@ -70,10 +71,10 @@ class BlockSnapshotClient:
         """
         logger.info(f"Getting snapshot summary for block {block_number}")
         
-        snapshot = self.create_snapshot_at_block(block_number)
+        snapshot = await self.create_snapshot_at_block(block_number)
         return format_block_snapshot_summary(snapshot)
     
-    def get_vault_addresses_at_block(self, block_number: int) -> Dict[str, Any]:
+    async def get_vault_addresses_at_block(self, block_number: int) -> Dict[str, Any]:
         """
         Get just the vault addresses that existed at a specific block.
         
@@ -88,7 +89,7 @@ class BlockSnapshotClient:
         logger.info(f"Getting vault addresses for block {block_number}")
         
         try:
-            vault_addresses, errors = get_all_vault_addresses_up_to_block(block_number)
+            vault_addresses, errors = await get_all_vault_addresses_up_to_block(block_number)
             
             return {
                 "target_block": block_number,
@@ -108,7 +109,7 @@ class BlockSnapshotClient:
                 "success": False
             }
     
-    def get_evault_prices_at_block(self, block_number: int) -> Dict[str, Any]:
+    async def get_evault_prices_at_block(self, block_number: int) -> Dict[str, Any]:
         """
         Get EVault prices at a specific block.
         
@@ -123,7 +124,7 @@ class BlockSnapshotClient:
         logger.info(f"Getting EVault prices for block {block_number}")
         
         try:
-            prices, actual_block, errors = get_evault_prices_at_block(block_number)
+            prices, actual_block, errors = await get_evault_prices_at_block(block_number)
             
             return {
                 "target_block": block_number,
@@ -145,9 +146,9 @@ class BlockSnapshotClient:
                 "success": False
             }
     
-    def compare_blocks(self, block1: int, block2: int) -> Dict[str, Any]:
+    async def compare_blocks(self, block1: int, block2: int) -> Dict[str, Any]:
         """
-        Compare snapshots between two blocks.
+        Compare snapshots between two blocks (in parallel).
         
         Args:
             block1: First block number
@@ -159,8 +160,11 @@ class BlockSnapshotClient:
         logger.info(f"Comparing blocks {block1} and {block2}")
         
         try:
-            snapshot1 = self.create_snapshot_at_block(block1)
-            snapshot2 = self.create_snapshot_at_block(block2)
+            # Fetch both snapshots in parallel
+            snapshot1, snapshot2 = await asyncio.gather(
+                self.create_snapshot_at_block(block1),
+                self.create_snapshot_at_block(block2)
+            )
             
             summary1 = format_block_snapshot_summary(snapshot1)
             summary2 = format_block_snapshot_summary(snapshot2)
@@ -203,9 +207,9 @@ class BlockSnapshotClient:
                 "error": str(e)
             }
     
-    def get_block_range_summary(self, start_block: int, end_block: int, step: int = 1000) -> Dict[str, Any]:
+    async def get_block_range_summary(self, start_block: int, end_block: int, step: int = 1000) -> Dict[str, Any]:
         """
-        Get summary data for a range of blocks.
+        Get summary data for a range of blocks (in parallel).
         
         Args:
             start_block: Starting block number
@@ -218,24 +222,29 @@ class BlockSnapshotClient:
         logger.info(f"Getting block range summary from {start_block} to {end_block} with step {step}")
         
         try:
-            summaries = []
+            # Generate list of blocks to process
+            blocks_to_process = []
             current_block = start_block
-            
             while current_block <= end_block:
+                blocks_to_process.append(current_block)
+                current_block += step
+            
+            # Process all blocks in parallel
+            async def process_block(block_num: int) -> Dict[str, Any]:
                 try:
-                    summary = self.get_snapshot_summary(current_block)
-                    summaries.append(summary)
-                    logger.info(f"Processed block {current_block}")
+                    summary = await self.get_snapshot_summary(block_num)
+                    logger.info(f"Processed block {block_num}")
+                    return summary
                 except Exception as e:
-                    logger.error(f"Failed to process block {current_block}: {str(e)}")
-                    summaries.append({
-                        "target_block": current_block,
+                    logger.error(f"Failed to process block {block_num}: {str(e)}")
+                    return {
+                        "target_block": block_num,
                         "error": str(e),
                         "successful_snapshots": 0,
                         "total_assets_usd": 0.0
-                    })
-                
-                current_block += step
+                    }
+            
+            summaries = await asyncio.gather(*[process_block(block) for block in blocks_to_process])
             
             return {
                 "start_block": start_block,

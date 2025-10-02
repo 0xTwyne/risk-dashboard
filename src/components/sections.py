@@ -4,6 +4,7 @@ Contains reusable dashboard sections with specific business logic.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List
 from datetime import datetime
 from dash import html, dcc, callback, Output, Input, dash_table
@@ -30,7 +31,24 @@ from .charts import create_health_factor_scatter_plot, create_multi_vault_utiliz
 logger = logging.getLogger(__name__)
 
 
-def fetch_collateral_vault_data() -> Dict[str, Any]:
+def run_async(coro):
+    """
+    Helper to run async functions in sync callbacks.
+    Uses existing event loop if available, otherwise creates new one.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is running, we need to use run_coroutine_threadsafe or similar
+            # For Dash callbacks, this shouldn't happen
+            raise RuntimeError("Event loop is already running")
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop exists, create a new one
+        return asyncio.run(coro)
+
+
+async def fetch_collateral_vault_data() -> Dict[str, Any]:
     """
     Fetch collateral vault snapshots and return summary metrics.
     
@@ -41,7 +59,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
         logger.info("Fetching collateral vaults snapshots...")
         
         # Fetch data using the API client
-        response = api_client.get_collateral_vaults_snapshots(limit=100)
+        response = await api_client.get_collateral_vaults_snapshots(limit=100)
         
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error: {response['error']}")
@@ -68,7 +86,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
             }
         
         # Calculate USD values using EVault pricing
-        enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(snapshots)
+        enhanced_snapshots, pricing_warnings = await calculate_multiple_snapshots_usd_values(snapshots)
         
         # Count unique vault addresses
         unique_vault_addresses = set()
@@ -106,7 +124,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
         }
 
 
-def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
+async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
     """
     Fetch collateral vault snapshots at a specific block and return summary metrics.
     
@@ -120,7 +138,7 @@ def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
         logger.info(f"Fetching collateral vaults snapshots at block {block_number:,}...")
         
         # Create block snapshot using the block snapshot client
-        block_snapshot = block_snapshot_client.create_snapshot_at_block(block_number)
+        block_snapshot = await block_snapshot_client.create_snapshot_at_block(block_number)
         
         if not block_snapshot or not hasattr(block_snapshot, 'vault_snapshots'):
             logger.error(f"Failed to create block snapshot for block {block_number}")
@@ -297,7 +315,7 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
     )
 
 
-def fetch_evaults_data() -> Dict[str, Any]:
+async def fetch_evaults_data() -> Dict[str, Any]:
     """
     Fetch EVault metrics and return summary data.
     
@@ -308,7 +326,7 @@ def fetch_evaults_data() -> Dict[str, Any]:
         logger.info("Fetching EVaults latest metrics...")
         
         # Fetch data using the API client
-        response = api_client.get_evaults_latest()
+        response = await api_client.get_evaults_latest()
         
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error: {response['error']}")
@@ -339,7 +357,7 @@ def fetch_evaults_data() -> Dict[str, Any]:
         }
 
 
-def fetch_evaults_historical_data(
+async def fetch_evaults_historical_data(
     vault_addresses: List[str], 
     max_records_per_vault: int = 20000
 ) -> List[Dict[str, Any]]:
@@ -370,7 +388,7 @@ def fetch_evaults_historical_data(
             while len(all_metrics) < max_records_per_vault:
                 logger.info(f"Fetching batch for {vault_address}: offset={offset}, limit={limit}")
                 
-                response = api_client.get_evault_metrics(
+                response = await api_client.get_evault_metrics(
                     address=vault_address,
                     limit=limit,
                     offset=offset
@@ -621,10 +639,10 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     
     if selected_block is not None:
         logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
-        data = fetch_collateral_vault_data_at_block(selected_block)
+        data = run_async(fetch_collateral_vault_data_at_block(selected_block))
     else:
         logger.info("Updating collateral vaults metrics (latest data)...")
-        data = fetch_collateral_vault_data()
+        data = run_async(fetch_collateral_vault_data())
     
     # Create status message
     if data["error"]:
@@ -887,7 +905,7 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
     logger.info("Updating EVaults metrics...")
     
     # Fetch the data
-    data = fetch_evaults_data()
+    data = run_async(fetch_evaults_data())
     
     # Create status message
     if data["error"]:
@@ -1048,7 +1066,7 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
             
             # Fetch historical data for all filtered vaults (get all available data)
-            vault_historical_data = fetch_evaults_historical_data(vault_addresses)
+            vault_historical_data = run_async(fetch_evaults_historical_data(vault_addresses))
             
             if vault_historical_data:
                 chart_component = html.Div([

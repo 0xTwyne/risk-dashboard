@@ -5,10 +5,9 @@ Handles all API communication with error handling, retries, and caching.
 
 import logging
 from typing import Dict, List, Optional, Any, Union
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import httpx
 import time
+import asyncio
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from config import Config
@@ -36,40 +35,37 @@ class APIClient:
     
     def __init__(self):
         self.config = Config()
-        self.session = self._create_session()
+        self._client = None
         
         logger.info("APIClient initialized")
         logger.info(f"API Base URL: {self.config.API_BASE_URL}")
     
-    def _create_session(self) -> requests.Session:
-        """Create a requests session with retry strategy and timeouts."""
-        session = requests.Session()
-        
-        # Configure retry strategy
-        retry_strategy = Retry(
-            total=self.config.API_MAX_RETRIES,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "OPTIONS"]
-        )
-        
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        # Set default headers
-        session.headers.update(self.config.get_headers())
-        
-        return session
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create async HTTP client with retry configuration."""
+        if self._client is None or self._client.is_closed:
+            transport = httpx.AsyncHTTPTransport(retries=self.config.API_MAX_RETRIES)
+            self._client = httpx.AsyncClient(
+                transport=transport,
+                headers=self.config.get_headers(),
+                timeout=self.config.API_TIMEOUT,
+                follow_redirects=True
+            )
+        return self._client
+    
+    async def close(self):
+        """Close the HTTP client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            logger.info("APIClient closed")
     
 
     
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((requests.RequestException, requests.Timeout))
+        retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException))
     )
-    def _make_request(
+    async def _make_request(
         self, 
         method: str, 
         endpoint: str, 
@@ -87,22 +83,21 @@ class APIClient:
             API response data
             
         Raises:
-            requests.RequestException: On API errors
+            httpx.HTTPError: On API errors
         """
         # Build URL
         url = self.config.get_api_url(endpoint)
+        client = await self._get_client()
         
         try:
             logger.info(f"Making {method} request to {url}")
             logger.debug(f"Request params: {params}")
-            logger.debug(f"Request headers: {dict(self.session.headers)}")
             
             start_time = time.time()
-            response = self.session.request(
+            response = await client.request(
                 method=method,
                 url=url,
-                params=params,
-                timeout=self.config.API_TIMEOUT
+                params=params
             )
             request_duration = time.time() - start_time
             
@@ -125,7 +120,7 @@ class APIClient:
             
             return data
             
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error for {url}: {e}")
             if e.response.status_code == 404:
                 return {"error": "Resource not found"}
@@ -134,14 +129,14 @@ class APIClient:
             else:
                 return {"error": f"HTTP {e.response.status_code} error"}
                 
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Request failed for {url}: {e}")
             raise
     
-    def get_health(self) -> Union[HealthCheckResponse, Dict[str, str]]:
+    async def get_health(self) -> Union[HealthCheckResponse, Dict[str, str]]:
         """Get API health status."""
         try:
-            data = self._make_request("GET", "health")
+            data = await self._make_request("GET", "health")
             if "error" in data:
                 return data
             return HealthCheckResponse(**data)
@@ -149,7 +144,7 @@ class APIClient:
             logger.error(f"Health check failed: {e}")
             return {"error": str(e)}
     
-    def get_collateral_vaults_snapshots(
+    async def get_collateral_vaults_snapshots(
         self,
         limit: int = 50,
         offset: int = 0,
@@ -178,7 +173,7 @@ class APIClient:
         logger.info(f"Fetching collateral vaults snapshots with params: {params}")
         
         try:
-            data = self._make_request("GET", "collateral_latest_snapshots", params)
+            data = await self._make_request("GET", "collateral_latest_snapshots", params)
             if "error" in data:
                 logger.error(f"API returned error for collateral snapshots: {data['error']}")
                 return data
@@ -190,7 +185,7 @@ class APIClient:
             logger.error(f"Failed to get collateral vaults snapshots: {e}", exc_info=True)
             return {"error": str(e)}
     
-    def get_collateral_vaults(
+    async def get_collateral_vaults(
         self,
         limit: int = 50,
         offset: int = 0,
@@ -213,7 +208,7 @@ class APIClient:
             params["endBlock"] = block_number
         
         try:
-            data = self._make_request("GET", "collateral_vaults", params)
+            data = await self._make_request("GET", "collateral_vaults", params)
             if "error" in data:
                 return data
             return CollateralVaultsResponse(**data)
@@ -221,7 +216,7 @@ class APIClient:
             logger.error(f"Failed to get collateral vaults: {e}")
             return {"error": str(e)}
     
-    def get_collateral_vault_history(
+    async def get_collateral_vault_history(
         self,
         address: str,
         limit: int = 100,
@@ -263,18 +258,18 @@ class APIClient:
         try:
             # Build URL with address parameter
             url = self.config.get_api_url("collateral_vault_history", address=address)
+            client = await self._get_client()
             
             logger.info(f"Making GET request to {url}")
             logger.debug(f"Request params: {params}")
             
-            start_time = time.time()
-            response = self.session.request(
+            start_time_val = time.time()
+            response = await client.request(
                 method="GET",
                 url=url,
-                params=params,
-                timeout=self.config.API_TIMEOUT
+                params=params
             )
-            request_duration = time.time() - start_time
+            request_duration = time.time() - start_time_val
             
             logger.info(f"Request completed in {request_duration:.2f}s - Status: {response.status_code}")
             
@@ -292,7 +287,7 @@ class APIClient:
             logger.error(f"Failed to get collateral vault history for {address}: {e}")
             return {"error": str(e)}
     
-    def get_external_liquidations(
+    async def get_external_liquidations(
         self,
         limit: int = 50,
         offset: int = 0
@@ -310,7 +305,7 @@ class APIClient:
         params = {"limit": limit, "offset": offset}
         
         try:
-            data = self._make_request("GET", "external_liquidations", params)
+            data = await self._make_request("GET", "external_liquidations", params)
             if "error" in data:
                 return data
             return ExternalLiquidationsResponse(**data)
@@ -318,7 +313,7 @@ class APIClient:
             logger.error(f"Failed to get external liquidations: {e}")
             return {"error": str(e)}
     
-    def get_internal_liquidations(
+    async def get_internal_liquidations(
         self,
         limit: int = 50,
         offset: int = 0,
@@ -353,7 +348,7 @@ class APIClient:
             params["endTimestamp"] = end_timestamp
         
         try:
-            data = self._make_request("GET", "internal_liquidations", params)
+            data = await self._make_request("GET", "internal_liquidations", params)
             if "error" in data:
                 return data
             return InternalLiquidationsResponse(**data)
@@ -361,7 +356,7 @@ class APIClient:
             logger.error(f"Failed to get internal liquidations: {e}")
             return {"error": str(e)}
     
-    def get_evaults_latest(self) -> Union[EVaultMetricsResponse, Dict[str, str]]:
+    async def get_evaults_latest(self) -> Union[EVaultMetricsResponse, Dict[str, str]]:
         """
         Get latest metrics for all EVaults.
         
@@ -369,7 +364,7 @@ class APIClient:
             API response or error dict
         """
         try:
-            data = self._make_request("GET", "evaults_latest")
+            data = await self._make_request("GET", "evaults_latest")
             if "error" in data:
                 return data
             return EVaultMetricsResponse(**data)
@@ -377,7 +372,7 @@ class APIClient:
             logger.error(f"Failed to get latest EVaults: {e}")
             return {"error": str(e)}
     
-    def get_evault_metrics(
+    async def get_evault_metrics(
         self,
         address: str,
         limit: int = 100,
@@ -416,18 +411,18 @@ class APIClient:
         try:
             # Build URL with address parameter  
             url = self.config.get_api_url("evault_metrics", address=address)
+            client = await self._get_client()
             
             logger.info(f"Making GET request to {url}")
             logger.debug(f"Request params: {params}")
             
-            start_time = time.time()
-            response = self.session.request(
+            start_time_val = time.time()
+            response = await client.request(
                 method="GET",
                 url=url,
-                params=params,
-                timeout=self.config.API_TIMEOUT
+                params=params
             )
-            request_duration = time.time() - start_time
+            request_duration = time.time() - start_time_val
             
             logger.info(f"Request completed in {request_duration:.2f}s - Status: {response.status_code}")
             
@@ -446,7 +441,7 @@ class APIClient:
             logger.error(f"Failed to get EVault metrics for {address}: {e}")
             return {"error": str(e)}
     
-    def get_chainlink_latest(self) -> Union[ChainlinkAnswersResponse, Dict[str, str]]:
+    async def get_chainlink_latest(self) -> Union[ChainlinkAnswersResponse, Dict[str, str]]:
         """
         Get latest Chainlink price feed updates.
         
@@ -454,7 +449,7 @@ class APIClient:
             API response or error dict
         """
         try:
-            data = self._make_request("GET", "chainlink_latest")
+            data = await self._make_request("GET", "chainlink_latest")
             if "error" in data:
                 return data
             return ChainlinkAnswersResponse(**data)
@@ -462,7 +457,7 @@ class APIClient:
             logger.error(f"Failed to get Chainlink latest: {e}")
             return {"error": str(e)}
     
-    def get_gov_set_events(
+    async def get_gov_set_events(
         self,
         event_type: str,
         vault_address: Optional[str] = None,
@@ -513,7 +508,7 @@ class APIClient:
         
         try:
             logger.info(f"Fetching {event_type} events with params: {params}")
-            data = self._make_request("GET", endpoint_key, params)
+            data = await self._make_request("GET", endpoint_key, params)
             
             if "error" in data:
                 logger.error(f"API returned error for {event_type}: {data['error']}")

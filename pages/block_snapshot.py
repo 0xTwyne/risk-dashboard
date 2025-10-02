@@ -4,6 +4,7 @@ Allows users to create snapshots of all collateral vaults at specific blocks.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -17,6 +18,17 @@ from src.utils.block_snapshot import format_block_snapshot_for_table
 from src.components import PageContainer, LoadingSpinner, MetricCard
 
 logger = logging.getLogger(__name__)
+
+
+def run_async(coro):
+    """Helper to run async functions in sync callbacks."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            raise RuntimeError("Event loop is already running")
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 # Register the page
 dash.register_page(
@@ -319,7 +331,7 @@ def create_block_snapshot(create_clicks, summary_clicks, block_number):
         if trigger_id == "get-summary-btn":
             # Get summary only
             logger.info(f"Getting snapshot summary for block {block_number}")
-            summary = block_snapshot_client.get_snapshot_summary(block_number)
+            summary = run_async(block_snapshot_client.get_snapshot_summary(block_number))
             
             if 'successful_snapshots' not in summary:
                 return (
@@ -345,7 +357,7 @@ def create_block_snapshot(create_clicks, summary_clicks, block_number):
         else:
             # Create full snapshot
             logger.info(f"Creating full snapshot for block {block_number}")
-            block_snapshot = block_snapshot_client.create_snapshot_at_block(block_number)
+            block_snapshot = run_async(block_snapshot_client.create_snapshot_at_block(block_number))
             
             if not block_snapshot or not hasattr(block_snapshot, 'vault_snapshots'):
                 return (
