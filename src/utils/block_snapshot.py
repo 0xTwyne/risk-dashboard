@@ -4,6 +4,7 @@ Implements functionality to get snapshots of all collateral vaults at a given bl
 """
 
 import logging
+import asyncio
 from typing import Dict, List, Optional, Tuple, Any, Set
 from datetime import datetime
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ class BlockSnapshot:
     evault_prices_block: Optional[int]  # Block number where prices were fetched from
 
 
-def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], List[str]]:
+async def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], List[str]]:
     """
     Get all collateral vault addresses that have been created up to a given block.
     
@@ -49,7 +50,7 @@ def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], Li
         total_fetched = 0
         
         while True:
-            response = api_client.get_collateral_vaults(
+            response = await api_client.get_collateral_vaults(
                 limit=limit, 
                 offset=offset, 
                 block_number=target_block
@@ -95,7 +96,7 @@ def get_all_vault_addresses_up_to_block(target_block: int) -> Tuple[Set[str], Li
         return vault_addresses, error_messages
 
 
-def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int, List[str]]:
+async def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int, List[str]]:
     """
     Get EVault prices at or before a specific block number.
     
@@ -114,7 +115,7 @@ def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int
         
         # First, get all EVault addresses from latest data
         # This gives us the list of vaults to query historically
-        latest_response = api_client.get_evaults_latest()
+        latest_response = await api_client.get_evaults_latest()
         
         if isinstance(latest_response, dict) and "error" in latest_response:
             error_msg = f"Failed to get EVault addresses: {latest_response['error']}"
@@ -138,14 +139,15 @@ def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int
         
         logger.info(f"Found {len(vault_addresses)} EVault addresses to query for historical prices")
         
-        # For each vault, get historical metrics up to target block
+        # For each vault, get historical metrics up to target block (in parallel)
         all_historical_metrics = []
         blocks_found = set()
         
-        for vault_address in vault_addresses:
+        async def fetch_vault_metric(vault_address: str) -> Tuple[Optional[Any], List[str]]:
+            """Helper to fetch metrics for a single vault."""
+            vault_errors = []
             try:
-                # Query historical metrics for this vault up to target block
-                response = api_client.get_evault_metrics(
+                response = await api_client.get_evault_metrics(
                     address=vault_address,
                     limit=1,  # We only need the latest metric at or before target block
                     end_block=target_block
@@ -154,31 +156,40 @@ def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int
                 if isinstance(response, dict) and "error" in response:
                     error_msg = f"Failed to get historical metrics for vault {vault_address}: {response['error']}"
                     logger.warning(error_msg)
-                    error_messages.append(error_msg)
-                    continue
+                    vault_errors.append(error_msg)
+                    return None, vault_errors
                 
                 metrics = getattr(response, 'metrics', []) or []
                 if metrics:
-                    # Take the most recent metric (should be closest to target block)
                     latest_metric = metrics[0]
                     metric_block = int(latest_metric.blockNumber)
                     
                     if metric_block <= target_block:
-                        all_historical_metrics.append(latest_metric)
-                        blocks_found.add(metric_block)
                         logger.debug(f"Found metric for vault {vault_address} at block {metric_block}")
+                        return latest_metric, vault_errors
                     else:
                         logger.debug(f"Metric for vault {vault_address} at block {metric_block} is after target {target_block}")
                 else:
                     error_msg = f"No historical metrics found for vault {vault_address} up to block {target_block}"
                     logger.warning(error_msg)
-                    error_messages.append(error_msg)
+                    vault_errors.append(error_msg)
                     
             except Exception as e:
                 error_msg = f"Error fetching metrics for vault {vault_address}: {str(e)}"
                 logger.error(error_msg)
-                error_messages.append(error_msg)
-                continue
+                vault_errors.append(error_msg)
+            
+            return None, vault_errors
+        
+        # Fetch all vault metrics in parallel
+        results = await asyncio.gather(*[fetch_vault_metric(addr) for addr in vault_addresses])
+        
+        # Process results
+        for metric, vault_errors in results:
+            error_messages.extend(vault_errors)
+            if metric:
+                all_historical_metrics.append(metric)
+                blocks_found.add(int(metric.blockNumber))
         
         if not all_historical_metrics:
             error_msg = f"No historical EVault metrics found for any vault at or before block {target_block}"
@@ -205,7 +216,7 @@ def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float], int
         return price_lookup, actual_block, error_messages
 
 
-def get_vault_snapshot_at_block(
+async def get_vault_snapshot_at_block(
     vault_address: str, 
     target_block: int
 ) -> Tuple[Optional[Any], List[str]]:
@@ -225,7 +236,7 @@ def get_vault_snapshot_at_block(
         logger.debug(f"Fetching snapshot for vault {vault_address} at or before block {target_block}")
         
         # Get historical snapshots for this vault up to target block
-        response = api_client.get_collateral_vault_history(
+        response = await api_client.get_collateral_vault_history(
             address=vault_address,
             limit=1,  # Only need the most recent snapshot
             end_block=target_block
@@ -264,14 +275,14 @@ def get_vault_snapshot_at_block(
         return None, error_messages
 
 
-def create_block_snapshot(target_block: int) -> BlockSnapshot:
+async def create_block_snapshot(target_block: int) -> BlockSnapshot:
     """
     Create a comprehensive snapshot of all collateral vaults at a given block.
     
     This is the main function that orchestrates the entire process:
     1. Discover all vault addresses created up to target block
     2. Get EVault prices at or before target block  
-    3. Fetch the closest snapshot for each vault
+    3. Fetch the closest snapshot for each vault (in parallel)
     4. Price the native amounts using historical prices
     
     Args:
@@ -286,7 +297,7 @@ def create_block_snapshot(target_block: int) -> BlockSnapshot:
     vault_snapshots = []
     
     # Step 1: Discover all vault addresses
-    vault_addresses, discovery_errors = get_all_vault_addresses_up_to_block(target_block)
+    vault_addresses, discovery_errors = await get_all_vault_addresses_up_to_block(target_block)
     all_errors.extend(discovery_errors)
     
     if not vault_addresses:
@@ -302,7 +313,7 @@ def create_block_snapshot(target_block: int) -> BlockSnapshot:
         )
     
     # Step 2: Get EVault prices at target block
-    evault_prices, prices_block, pricing_errors = get_evault_prices_at_block(target_block)
+    evault_prices, prices_block, pricing_errors = await get_evault_prices_at_block(target_block)
     all_errors.extend(pricing_errors)
     
     if not evault_prices:
@@ -317,16 +328,20 @@ def create_block_snapshot(target_block: int) -> BlockSnapshot:
             evault_prices_block=prices_block
         )
     
-    # Step 3: Fetch snapshots for each vault and price them
+    # Step 3: Fetch snapshots for each vault in parallel and price them
     successful_snapshots = 0
     snapshot_timestamp = None
     
-    for vault_address in vault_addresses:
-        snapshot, snapshot_errors = get_vault_snapshot_at_block(vault_address, target_block)
-        all_errors.extend(snapshot_errors)
+    # Helper function to fetch and price a single vault
+    async def process_vault(vault_address: str) -> Tuple[Optional[Dict], List[str]]:
+        """Fetch and price a single vault snapshot."""
+        vault_errors = []
+        
+        snapshot, snapshot_errors = await get_vault_snapshot_at_block(vault_address, target_block)
+        vault_errors.extend(snapshot_errors)
         
         if snapshot is None:
-            continue
+            return None, vault_errors
         
         # Get prices for this snapshot's vaults
         credit_vault = getattr(snapshot, 'creditVault', '')
@@ -337,17 +352,17 @@ def create_block_snapshot(target_block: int) -> BlockSnapshot:
         
         if credit_price == 0.0:
             error_msg = f"No price available for credit vault {credit_vault}"
-            all_errors.append(error_msg)
+            vault_errors.append(error_msg)
         
         if debt_price == 0.0:
             error_msg = f"No price available for debt vault {debt_vault}"
-            all_errors.append(error_msg)
+            vault_errors.append(error_msg)
         
         # Calculate USD values using historical prices
         usd_values, calc_errors = calculate_collateral_usd_values(
             snapshot, credit_price, debt_price
         )
-        all_errors.extend(calc_errors)
+        vault_errors.extend(calc_errors)
         
         # Create enhanced snapshot data
         enhanced_snapshot = {
@@ -362,12 +377,22 @@ def create_block_snapshot(target_block: int) -> BlockSnapshot:
             'has_pricing_errors': len(calc_errors) > 0
         }
         
-        vault_snapshots.append(enhanced_snapshot)
-        successful_snapshots += 1
-        
-        # Set timestamp from first valid snapshot
-        if snapshot_timestamp is None:
-            snapshot_timestamp = int(snapshot.blockTimestamp)
+        return enhanced_snapshot, vault_errors
+    
+    # Process all vaults in parallel
+    results = await asyncio.gather(*[process_vault(addr) for addr in vault_addresses])
+    
+    # Collect results
+    for enhanced_snapshot, vault_errors in results:
+        all_errors.extend(vault_errors)
+        if enhanced_snapshot:
+            vault_snapshots.append(enhanced_snapshot)
+            successful_snapshots += 1
+            
+            # Set timestamp from first valid snapshot
+            if snapshot_timestamp is None:
+                snapshot = enhanced_snapshot['original_snapshot']
+                snapshot_timestamp = int(snapshot.blockTimestamp)
     
     logger.info(f"Successfully created block snapshot with {successful_snapshots}/{len(vault_addresses)} vaults")
     

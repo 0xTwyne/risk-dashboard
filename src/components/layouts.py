@@ -35,7 +35,7 @@ def DashboardHeader(title: str = "Risk Dashboard") -> html.Div:
                     dbc.NavItem(dbc.NavLink("Home", href="/", className="text-white")),
                     dbc.NavItem(dbc.NavLink("Collateral Vaults", href="/collateralVaults", className="text-white")),
                     dbc.NavItem(dbc.NavLink("EVaults", href="/evaults", className="text-white")),
-                    dbc.NavItem(dbc.NavLink("Block Snapshot", href="/block-snapshot", className="text-white")),
+                    dbc.NavItem(dbc.NavLink("Block Comparison", href="/block-snapshot", className="text-white")),
                     dbc.NavItem(dbc.NavLink("Liquidations", href="/liquidations", className="text-white"))
                 ], navbar=True, className="ms-auto")
             ], fluid=True)

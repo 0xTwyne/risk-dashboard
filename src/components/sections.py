@@ -4,6 +4,7 @@ Contains reusable dashboard sections with specific business logic.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List
 from datetime import datetime
 from dash import html, dcc, callback, Output, Input, dash_table
@@ -30,7 +31,24 @@ from .charts import create_health_factor_scatter_plot, create_multi_vault_utiliz
 logger = logging.getLogger(__name__)
 
 
-def fetch_collateral_vault_data() -> Dict[str, Any]:
+def run_async(coro):
+    """
+    Helper to run async functions in sync callbacks.
+    Uses existing event loop if available, otherwise creates new one.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If loop is running, we need to use run_coroutine_threadsafe or similar
+            # For Dash callbacks, this shouldn't happen
+            raise RuntimeError("Event loop is already running")
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop exists, create a new one
+        return asyncio.run(coro)
+
+
+async def fetch_collateral_vault_data() -> Dict[str, Any]:
     """
     Fetch collateral vault snapshots and return summary metrics.
     
@@ -41,7 +59,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
         logger.info("Fetching collateral vaults snapshots...")
         
         # Fetch data using the API client
-        response = api_client.get_collateral_vaults_snapshots(limit=100)
+        response = await api_client.get_collateral_vaults_snapshots(limit=100)
         
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error: {response['error']}")
@@ -68,7 +86,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
             }
         
         # Calculate USD values using EVault pricing
-        enhanced_snapshots, pricing_warnings = calculate_multiple_snapshots_usd_values(snapshots)
+        enhanced_snapshots, pricing_warnings = await calculate_multiple_snapshots_usd_values(snapshots)
         
         # Count unique vault addresses
         unique_vault_addresses = set()
@@ -106,7 +124,7 @@ def fetch_collateral_vault_data() -> Dict[str, Any]:
         }
 
 
-def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
+async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
     """
     Fetch collateral vault snapshots at a specific block and return summary metrics.
     
@@ -120,7 +138,7 @@ def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
         logger.info(f"Fetching collateral vaults snapshots at block {block_number:,}...")
         
         # Create block snapshot using the block snapshot client
-        block_snapshot = block_snapshot_client.create_snapshot_at_block(block_number)
+        block_snapshot = await block_snapshot_client.create_snapshot_at_block(block_number)
         
         if not block_snapshot or not hasattr(block_snapshot, 'vault_snapshots'):
             logger.error(f"Failed to create block snapshot for block {block_number}")
@@ -297,7 +315,7 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
     )
 
 
-def fetch_evaults_data() -> Dict[str, Any]:
+async def fetch_evaults_data() -> Dict[str, Any]:
     """
     Fetch EVault metrics and return summary data.
     
@@ -308,7 +326,7 @@ def fetch_evaults_data() -> Dict[str, Any]:
         logger.info("Fetching EVaults latest metrics...")
         
         # Fetch data using the API client
-        response = api_client.get_evaults_latest()
+        response = await api_client.get_evaults_latest()
         
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error: {response['error']}")
@@ -339,7 +357,56 @@ def fetch_evaults_data() -> Dict[str, Any]:
         }
 
 
-def fetch_evaults_historical_data(
+async def fetch_evaults_data_with_history(vault_type: str) -> Dict[str, Any]:
+    """
+    Fetch EVaults data and historical data in a single async function.
+    
+    Args:
+        vault_type: Either "twyne" or "euler"
+        
+    Returns:
+        Dict containing EVaults data and historical data
+    """
+    try:
+        # Fetch EVaults data
+        evaults_data = await fetch_evaults_data()
+        
+        if evaults_data["error"]:
+            # Add empty fields for error case
+            evaults_data["filtered_metrics"] = []
+            evaults_data["vault_historical_data"] = []
+            return evaults_data
+        
+        # Filter by vault type
+        filtered_metrics = filter_evaults_by_type(evaults_data["metrics"], vault_type)
+        
+        # If we have filtered metrics, fetch historical data
+        vault_historical_data = []
+        if filtered_metrics:
+            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
+            logger.info(f"Fetching historical data for {len(vault_addresses)} {vault_type} vault(s)")
+            logger.info(f"Vault addresses: {vault_addresses}")
+            vault_historical_data = await fetch_evaults_historical_data(vault_addresses)
+            logger.info(f"Received historical data for {len(vault_historical_data)} vault(s)")
+        
+        # Add filtered metrics and historical data to the response
+        evaults_data["filtered_metrics"] = filtered_metrics
+        evaults_data["vault_historical_data"] = vault_historical_data
+        
+        return evaults_data
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch EVaults data with history: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "total_vaults": 0,
+            "metrics": [],
+            "filtered_metrics": [],
+            "vault_historical_data": []
+        }
+
+
+async def fetch_evaults_historical_data(
     vault_addresses: List[str], 
     max_records_per_vault: int = 20000
 ) -> List[Dict[str, Any]]:
@@ -361,6 +428,7 @@ def fetch_evaults_historical_data(
     for i, vault_address in enumerate(vault_addresses, 1):
         try:
             logger.info(f"Fetching historical data for vault {i}/{total_vaults}: {vault_address}")
+            logger.info(f"Vault address type: {type(vault_address)}, length: {len(vault_address)}")
             
             # Fetch all historical data using pagination
             all_metrics = []
@@ -370,14 +438,15 @@ def fetch_evaults_historical_data(
             while len(all_metrics) < max_records_per_vault:
                 logger.info(f"Fetching batch for {vault_address}: offset={offset}, limit={limit}")
                 
-                response = api_client.get_evault_metrics(
+                response = await api_client.get_evault_metrics(
                     address=vault_address,
                     limit=limit,
                     offset=offset
                 )
                 
                 if isinstance(response, dict) and "error" in response:
-                    logger.warning(f"Failed to fetch batch for vault {vault_address}: {response['error']}")
+                    logger.error(f"API error fetching batch for vault {vault_address}: {response['error']}")
+                    logger.error(f"Full response: {response}")
                     break
                 
                 # Extract metrics from successful response
@@ -431,7 +500,7 @@ def fetch_evaults_historical_data(
             logger.info(f"Successfully fetched {len(all_metrics)} historical metrics for vault {vault_address} ({symbol})")
             
         except Exception as e:
-            logger.error(f"Error fetching historical data for vault {vault_address}: {e}")
+            logger.error(f"Error fetching historical data for vault {vault_address}: {e}", exc_info=True)
             continue
     
     logger.info(f"Successfully fetched historical data for {len(vault_data)}/{total_vaults} vaults")
@@ -621,10 +690,10 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     
     if selected_block is not None:
         logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
-        data = fetch_collateral_vault_data_at_block(selected_block)
+        data = run_async(fetch_collateral_vault_data_at_block(selected_block))
     else:
         logger.info("Updating collateral vaults metrics (latest data)...")
-        data = fetch_collateral_vault_data()
+        data = run_async(fetch_collateral_vault_data())
     
     # Create status message
     if data["error"]:
@@ -884,10 +953,10 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
     if pathname != "/evaults":
         return [], "", "", "", ""
     
-    logger.info("Updating EVaults metrics...")
+    logger.info(f"Updating EVaults metrics for {vault_type} vaults...")
     
-    # Fetch the data
-    data = fetch_evaults_data()
+    # Fetch the data and historical data in a single async call
+    data = run_async(fetch_evaults_data_with_history(vault_type))
     
     # Create status message
     if data["error"]:
@@ -896,6 +965,9 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             title="API Error"
         )
         metrics_cards = []
+        chart_component = html.Div([
+            html.P("Utilization chart unavailable due to API error", className="text-muted text-center p-4")
+        ])
         table_component = ErrorState(
             error_message="Unable to load table data due to API error",
             retry_callback="evaults-section-refresh"
@@ -908,8 +980,14 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             duration=3000  # Auto-dismiss after 3 seconds
         )
         
-        # Filter metrics by vault type
-        filtered_metrics = filter_evaults_by_type(data["metrics"], vault_type)
+        # Extract filtered metrics and historical data from the combined result
+        filtered_metrics = data["filtered_metrics"]
+        vault_historical_data = data["vault_historical_data"]
+        
+        logger.info(f"Filtered {len(filtered_metrics)} {vault_type} vaults from {len(data['metrics'])} total vaults")
+        if filtered_metrics:
+            symbols = [m.symbol for m in filtered_metrics]
+            logger.info(f"Filtered vault symbols: {symbols}")
         
         # Calculate summary metrics with proper scaling using filtered data
         total_assets_usd = 0.0
@@ -1039,38 +1117,31 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                 html.H5(f"{vault_type_display} EVaults Metrics", className="mb-3"),
                 html.P(f"No {vault_type_display} EVault metrics available", className="text-muted text-center p-4")
             ])
-    
-    # Create utilization chart
-    chart_component = html.Div()
-    if filtered_metrics:
-        try:
-            # Get vault addresses for historical data fetch
-            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
-            
-            # Fetch historical data for all filtered vaults (get all available data)
-            vault_historical_data = fetch_evaults_historical_data(vault_addresses)
-            
-            if vault_historical_data:
+        
+        # Create utilization chart using pre-fetched historical data
+        chart_component = html.Div()
+        if filtered_metrics and vault_historical_data:
+            try:
                 chart_component = html.Div([
                     html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
                     create_multi_vault_utilization_chart(vault_historical_data)
                 ])
-            else:
+            except Exception as e:
+                logger.error(f"Error creating utilization chart: {e}", exc_info=True)
                 chart_component = html.Div([
-                    html.H5(f"{vault_type_display} Vault Utilization Over Time", className="mb-3"),
-                    html.P("No historical data available for utilization chart", className="text-muted text-center p-4")
+                    html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
+                    html.P("Error loading utilization chart", className="text-muted text-center p-4")
                 ])
-        except Exception as e:
-            logger.error(f"Error creating utilization chart: {e}")
+        elif filtered_metrics and not vault_historical_data:
+            chart_component = html.Div([
+                html.H5(f"{vault_type_display} Vault Utilization Over Time", className="mb-3"),
+                html.P("No historical data available for utilization chart", className="text-muted text-center p-4")
+            ])
+        else:
             chart_component = html.Div([
                 html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
-                html.P("Error loading utilization chart", className="text-muted text-center p-4")
+                html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
             ])
-    else:
-        chart_component = html.Div([
-            html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
-            html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
-        ])
     
     # Last updated timestamp
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"

@@ -4,9 +4,9 @@ Handles fetching and caching of EVault metrics for price calculations.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
-from threading import Lock
 
 from src.api import api_client
 from .pricing import create_evault_price_lookup
@@ -17,18 +17,16 @@ logger = logging.getLogger(__name__)
 class EVaultDataCache:
     """
     Cache for EVault data with automatic expiration.
-    Thread-safe singleton implementation.
+    Async-safe singleton implementation.
     """
     
     _instance = None
-    _lock = Lock()
+    _init_lock = asyncio.Lock()
     
     def __new__(cls):
         if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super(EVaultDataCache, cls).__new__(cls)
-                    cls._instance._initialized = False
+            cls._instance = super(EVaultDataCache, cls).__new__(cls)
+            cls._instance._initialized = False
         return cls._instance
     
     def __init__(self):
@@ -36,8 +34,14 @@ class EVaultDataCache:
             self._cache = {}
             self._cache_timestamp = None
             self._cache_duration = timedelta(minutes=5)  # Cache for 5 minutes
-            self._data_lock = Lock()
+            self._data_lock = None  # Will be created on first async access
             self._initialized = True
+    
+    async def _get_lock(self) -> asyncio.Lock:
+        """Get or create the asyncio lock."""
+        if self._data_lock is None:
+            self._data_lock = asyncio.Lock()
+        return self._data_lock
     
     def _is_cache_valid(self) -> bool:
         """Check if cached data is still valid."""
@@ -45,22 +49,23 @@ class EVaultDataCache:
             return False
         return datetime.now() - self._cache_timestamp < self._cache_duration
     
-    def get_evault_data(self) -> Tuple[Dict[str, Any], List[str]]:
+    async def get_evault_data(self) -> Tuple[Dict[str, Any], List[str]]:
         """
         Get EVault data from cache or fetch fresh data if needed.
         
         Returns:
             Tuple of (evault_data_dict, error_messages_list)
         """
-        with self._data_lock:
+        lock = await self._get_lock()
+        async with lock:
             if self._is_cache_valid() and self._cache:
                 logger.debug("Using cached EVault data")
                 return self._cache.copy(), []
             
             logger.info("Fetching fresh EVault data")
-            return self._fetch_and_cache_data()
+            return await self._fetch_and_cache_data()
     
-    def _fetch_and_cache_data(self) -> Tuple[Dict[str, Any], List[str]]:
+    async def _fetch_and_cache_data(self) -> Tuple[Dict[str, Any], List[str]]:
         """
         Fetch fresh EVault data and update cache.
         
@@ -71,7 +76,7 @@ class EVaultDataCache:
         
         try:
             # Fetch latest EVault metrics
-            response = api_client.get_evaults_latest()
+            response = await api_client.get_evaults_latest()
             
             if isinstance(response, dict) and "error" in response:
                 error_msg = f"Failed to fetch EVault data: {response['error']}"
@@ -119,7 +124,7 @@ class EVaultDataCache:
             error_messages.append(error_msg)
             return {}, error_messages
     
-    def get_vault_price(self, vault_address: str) -> Tuple[float, Optional[str]]:
+    async def get_vault_price(self, vault_address: str) -> Tuple[float, Optional[str]]:
         """
         Get price for a specific vault address.
         
@@ -129,7 +134,7 @@ class EVaultDataCache:
         Returns:
             Tuple of (price, error_message). Price is 0.0 if not found.
         """
-        evault_data, errors = self.get_evault_data()
+        evault_data, errors = await self.get_evault_data()
         
         if vault_address in evault_data:
             price = evault_data[vault_address]['price']
@@ -140,7 +145,7 @@ class EVaultDataCache:
             error_msg = f"Warning: Vault {vault_address} not found in EVault data"
             return 0.0, error_msg
     
-    def get_vault_info(self, vault_address: str) -> Dict[str, Any]:
+    async def get_vault_info(self, vault_address: str) -> Dict[str, Any]:
         """
         Get comprehensive info for a specific vault.
         
@@ -150,12 +155,13 @@ class EVaultDataCache:
         Returns:
             Dictionary with vault info or empty dict if not found
         """
-        evault_data, _ = self.get_evault_data()
+        evault_data, _ = await self.get_evault_data()
         return evault_data.get(vault_address, {})
     
-    def clear_cache(self):
+    async def clear_cache(self):
         """Manually clear the cache to force fresh data fetch."""
-        with self._data_lock:
+        lock = await self._get_lock()
+        async with lock:
             self._cache = {}
             self._cache_timestamp = None
             logger.info("EVault data cache cleared")
@@ -165,19 +171,19 @@ class EVaultDataCache:
 evault_cache = EVaultDataCache()
 
 
-def fetch_evault_prices() -> Tuple[Dict[str, float], List[str]]:
+async def fetch_evault_prices() -> Tuple[Dict[str, float], List[str]]:
     """
     Convenience function to fetch EVault prices.
     
     Returns:
         Tuple of (price_lookup_dict, error_messages_list)
     """
-    evault_data, errors = evault_cache.get_evault_data()
+    evault_data, errors = await evault_cache.get_evault_data()
     price_lookup = {addr: data['price'] for addr, data in evault_data.items()}
     return price_lookup, errors
 
 
-def get_vault_prices_for_snapshot(
+async def get_vault_prices_for_snapshot(
     credit_vault_address: str, 
     debt_vault_address: str
 ) -> Tuple[float, float, List[str]]:
@@ -194,22 +200,22 @@ def get_vault_prices_for_snapshot(
     error_messages = []
     
     # Get credit vault price
-    credit_price, credit_error = evault_cache.get_vault_price(credit_vault_address)
+    credit_price, credit_error = await evault_cache.get_vault_price(credit_vault_address)
     if credit_error:
         error_messages.append(credit_error)
     
     # Get debt vault price
-    debt_price, debt_error = evault_cache.get_vault_price(debt_vault_address)
+    debt_price, debt_error = await evault_cache.get_vault_price(debt_vault_address)
     if debt_error:
         error_messages.append(debt_error)
     
     return credit_price, debt_price, error_messages
 
 
-def refresh_evault_cache():
+async def refresh_evault_cache():
     """
     Manually refresh the EVault cache.
     Useful for refresh buttons or periodic updates.
     """
-    evault_cache.clear_cache()
-    return evault_cache.get_evault_data()
+    await evault_cache.clear_cache()
+    return await evault_cache.get_evault_data()

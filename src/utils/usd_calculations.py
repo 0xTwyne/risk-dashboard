@@ -12,7 +12,7 @@ from .pricing import calculate_collateral_usd_values
 logger = logging.getLogger(__name__)
 
 
-def calculate_snapshot_usd_values(snapshot: Any) -> Tuple[Dict[str, float], List[str]]:
+async def calculate_snapshot_usd_values(snapshot: Any) -> Tuple[Dict[str, float], List[str]]:
     """
     Calculate USD values for a collateral vault snapshot using EVault pricing.
     
@@ -37,7 +37,7 @@ def calculate_snapshot_usd_values(snapshot: Any) -> Tuple[Dict[str, float], List
             return _get_zero_usd_values(), warning_messages
         
         # Get prices for both vaults
-        credit_price, debt_price, price_errors = get_vault_prices_for_snapshot(
+        credit_price, debt_price, price_errors = await get_vault_prices_for_snapshot(
             credit_vault, debt_vault
         )
         warning_messages.extend(price_errors)
@@ -57,7 +57,7 @@ def calculate_snapshot_usd_values(snapshot: Any) -> Tuple[Dict[str, float], List
         return _get_zero_usd_values(), warning_messages
 
 
-def calculate_multiple_snapshots_usd_values(
+async def calculate_multiple_snapshots_usd_values(
     snapshots: List[Any]
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
@@ -79,7 +79,7 @@ def calculate_multiple_snapshots_usd_values(
     
     for snapshot in snapshots:
         # Calculate USD values for this snapshot
-        usd_values, warnings = calculate_snapshot_usd_values(snapshot)
+        usd_values, warnings = await calculate_snapshot_usd_values(snapshot)
         all_warnings.extend(warnings)
         
         # Create enhanced snapshot data

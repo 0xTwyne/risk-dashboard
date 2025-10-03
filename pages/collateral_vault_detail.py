@@ -4,6 +4,7 @@ Displays historical snapshots and metrics for a specific collateral vault.
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import dash
@@ -23,6 +24,17 @@ from src.utils.block_snapshot import get_vault_snapshot_at_block
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+def run_async(coro):
+    """Helper to run async functions in sync callbacks."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            raise RuntimeError("Event loop is already running")
+        return loop.run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
 # Register the page with Dash - using path_template for dynamic routing
 dash.register_page(
     __name__, 
@@ -31,7 +43,7 @@ dash.register_page(
 )
 
 
-def fetch_vault_history_data(
+async def fetch_vault_history_data(
     vault_address: str, 
     limit: int = 100,
     start_time: Optional[int] = None,
@@ -53,7 +65,7 @@ def fetch_vault_history_data(
         logger.info(f"Fetching historical data for collateral vault: {vault_address}")
         
         # Fetch data using the API client
-        response = api_client.get_collateral_vault_history(
+        response = await api_client.get_collateral_vault_history(
             address=vault_address,
             limit=limit,
             start_time=start_time,
@@ -86,7 +98,7 @@ def fetch_vault_history_data(
         }
 
 
-def fetch_vault_data_at_block(vault_address: str, block_number: int, existing_snapshots: List = None) -> Dict[str, Any]:
+async def fetch_vault_data_at_block(vault_address: str, block_number: int, existing_snapshots: List = None) -> Dict[str, Any]:
     """
     Fetch vault snapshot at a specific block by filtering existing historical data and repricing.
     
@@ -104,7 +116,7 @@ def fetch_vault_data_at_block(vault_address: str, block_number: int, existing_sn
         # If no existing snapshots provided, fetch all historical data first
         if existing_snapshots is None:
             logger.info("No existing snapshots provided, fetching all historical data first")
-            historical_data = fetch_vault_history_data(vault_address, limit=10000)  # Get all history
+            historical_data = run_async(fetch_vault_history_data(vault_address, limit=10000))  # Get all history
             if historical_data["error"]:
                 return {
                     "error": historical_data["error"],
@@ -578,18 +590,18 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
         start_time = int((datetime.now() - timedelta(days=30)).timestamp())
     
     # Fetch the historical data with time filtering
-    historical_data = fetch_vault_history_data(
+    historical_data = run_async(fetch_vault_history_data(
         vault_address, 
         limit=1000,  # Increase limit for historical data
         start_time=start_time,
         end_time=end_time
-    )
+    ))
     
     # Check if we should use a specific block or the historical data as-is
     if selected_block is not None:
         logger.info(f"Filtering for block {selected_block:,} and repricing...")
         # Use the existing historical snapshots to find the right snapshot and reprice it
-        data = fetch_vault_data_at_block(vault_address, selected_block, historical_data.get("snapshots", []))
+        data = run_async(fetch_vault_data_at_block(vault_address, selected_block, historical_data.get("snapshots", [])))
     else:
         logger.info(f"Using historical data from {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d')} to {datetime.fromtimestamp(end_time).strftime('%Y-%m-%d')}")
         data = historical_data

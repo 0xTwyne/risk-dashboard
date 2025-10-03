@@ -26,7 +26,7 @@ dash.register_page(
 )
 
 
-def fetch_vault_historical_data(
+async def fetch_vault_historical_data(
     vault_address: str, 
     limit: int = 100,
     start_time: Optional[int] = None,
@@ -50,7 +50,7 @@ def fetch_vault_historical_data(
             logger.info(f"Time range: {datetime.fromtimestamp(start_time)} to {datetime.fromtimestamp(end_time)}")
         
         # Fetch historical data using the API client
-        response = api_client.get_evault_metrics(
+        response = await api_client.get_evault_metrics(
             address=vault_address, 
             limit=limit,
             start_time=start_time,
@@ -317,12 +317,12 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
         start_time = int((datetime.now() - timedelta(days=30)).timestamp())
     
     # Fetch the historical data with time filtering
-    data = fetch_vault_historical_data(
+    data = run_async(fetch_vault_historical_data(
         vault_address, 
         limit=1000,  # Increase limit for historical data
         start_time=start_time,
         end_time=end_time
-    )
+    ))
     
     # Create status message
     if data["error"]:
