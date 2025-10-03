@@ -357,6 +357,55 @@ async def fetch_evaults_data() -> Dict[str, Any]:
         }
 
 
+async def fetch_evaults_data_with_history(vault_type: str) -> Dict[str, Any]:
+    """
+    Fetch EVaults data and historical data in a single async function.
+    
+    Args:
+        vault_type: Either "twyne" or "euler"
+        
+    Returns:
+        Dict containing EVaults data and historical data
+    """
+    try:
+        # Fetch EVaults data
+        evaults_data = await fetch_evaults_data()
+        
+        if evaults_data["error"]:
+            # Add empty fields for error case
+            evaults_data["filtered_metrics"] = []
+            evaults_data["vault_historical_data"] = []
+            return evaults_data
+        
+        # Filter by vault type
+        filtered_metrics = filter_evaults_by_type(evaults_data["metrics"], vault_type)
+        
+        # If we have filtered metrics, fetch historical data
+        vault_historical_data = []
+        if filtered_metrics:
+            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
+            logger.info(f"Fetching historical data for {len(vault_addresses)} {vault_type} vault(s)")
+            logger.info(f"Vault addresses: {vault_addresses}")
+            vault_historical_data = await fetch_evaults_historical_data(vault_addresses)
+            logger.info(f"Received historical data for {len(vault_historical_data)} vault(s)")
+        
+        # Add filtered metrics and historical data to the response
+        evaults_data["filtered_metrics"] = filtered_metrics
+        evaults_data["vault_historical_data"] = vault_historical_data
+        
+        return evaults_data
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch EVaults data with history: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "total_vaults": 0,
+            "metrics": [],
+            "filtered_metrics": [],
+            "vault_historical_data": []
+        }
+
+
 async def fetch_evaults_historical_data(
     vault_addresses: List[str], 
     max_records_per_vault: int = 20000
@@ -379,6 +428,7 @@ async def fetch_evaults_historical_data(
     for i, vault_address in enumerate(vault_addresses, 1):
         try:
             logger.info(f"Fetching historical data for vault {i}/{total_vaults}: {vault_address}")
+            logger.info(f"Vault address type: {type(vault_address)}, length: {len(vault_address)}")
             
             # Fetch all historical data using pagination
             all_metrics = []
@@ -395,7 +445,8 @@ async def fetch_evaults_historical_data(
                 )
                 
                 if isinstance(response, dict) and "error" in response:
-                    logger.warning(f"Failed to fetch batch for vault {vault_address}: {response['error']}")
+                    logger.error(f"API error fetching batch for vault {vault_address}: {response['error']}")
+                    logger.error(f"Full response: {response}")
                     break
                 
                 # Extract metrics from successful response
@@ -449,7 +500,7 @@ async def fetch_evaults_historical_data(
             logger.info(f"Successfully fetched {len(all_metrics)} historical metrics for vault {vault_address} ({symbol})")
             
         except Exception as e:
-            logger.error(f"Error fetching historical data for vault {vault_address}: {e}")
+            logger.error(f"Error fetching historical data for vault {vault_address}: {e}", exc_info=True)
             continue
     
     logger.info(f"Successfully fetched historical data for {len(vault_data)}/{total_vaults} vaults")
@@ -902,10 +953,10 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
     if pathname != "/evaults":
         return [], "", "", "", ""
     
-    logger.info("Updating EVaults metrics...")
+    logger.info(f"Updating EVaults metrics for {vault_type} vaults...")
     
-    # Fetch the data
-    data = run_async(fetch_evaults_data())
+    # Fetch the data and historical data in a single async call
+    data = run_async(fetch_evaults_data_with_history(vault_type))
     
     # Create status message
     if data["error"]:
@@ -914,6 +965,9 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             title="API Error"
         )
         metrics_cards = []
+        chart_component = html.Div([
+            html.P("Utilization chart unavailable due to API error", className="text-muted text-center p-4")
+        ])
         table_component = ErrorState(
             error_message="Unable to load table data due to API error",
             retry_callback="evaults-section-refresh"
@@ -926,8 +980,14 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             duration=3000  # Auto-dismiss after 3 seconds
         )
         
-        # Filter metrics by vault type
-        filtered_metrics = filter_evaults_by_type(data["metrics"], vault_type)
+        # Extract filtered metrics and historical data from the combined result
+        filtered_metrics = data["filtered_metrics"]
+        vault_historical_data = data["vault_historical_data"]
+        
+        logger.info(f"Filtered {len(filtered_metrics)} {vault_type} vaults from {len(data['metrics'])} total vaults")
+        if filtered_metrics:
+            symbols = [m.symbol for m in filtered_metrics]
+            logger.info(f"Filtered vault symbols: {symbols}")
         
         # Calculate summary metrics with proper scaling using filtered data
         total_assets_usd = 0.0
@@ -1057,38 +1117,31 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                 html.H5(f"{vault_type_display} EVaults Metrics", className="mb-3"),
                 html.P(f"No {vault_type_display} EVault metrics available", className="text-muted text-center p-4")
             ])
-    
-    # Create utilization chart
-    chart_component = html.Div()
-    if filtered_metrics:
-        try:
-            # Get vault addresses for historical data fetch
-            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
-            
-            # Fetch historical data for all filtered vaults (get all available data)
-            vault_historical_data = run_async(fetch_evaults_historical_data(vault_addresses))
-            
-            if vault_historical_data:
+        
+        # Create utilization chart using pre-fetched historical data
+        chart_component = html.Div()
+        if filtered_metrics and vault_historical_data:
+            try:
                 chart_component = html.Div([
                     html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
                     create_multi_vault_utilization_chart(vault_historical_data)
                 ])
-            else:
+            except Exception as e:
+                logger.error(f"Error creating utilization chart: {e}", exc_info=True)
                 chart_component = html.Div([
-                    html.H5(f"{vault_type_display} Vault Utilization Over Time", className="mb-3"),
-                    html.P("No historical data available for utilization chart", className="text-muted text-center p-4")
+                    html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
+                    html.P("Error loading utilization chart", className="text-muted text-center p-4")
                 ])
-        except Exception as e:
-            logger.error(f"Error creating utilization chart: {e}")
+        elif filtered_metrics and not vault_historical_data:
+            chart_component = html.Div([
+                html.H5(f"{vault_type_display} Vault Utilization Over Time", className="mb-3"),
+                html.P("No historical data available for utilization chart", className="text-muted text-center p-4")
+            ])
+        else:
             chart_component = html.Div([
                 html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
-                html.P("Error loading utilization chart", className="text-muted text-center p-4")
+                html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
             ])
-    else:
-        chart_component = html.Div([
-            html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
-            html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
-        ])
     
     # Last updated timestamp
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
