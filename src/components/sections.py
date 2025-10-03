@@ -1147,3 +1147,472 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
     
     return metrics_cards, status_message, chart_component, table_component, last_updated
+
+
+# =======================
+# Liquidations Section
+# =======================
+
+
+async def fetch_internal_liquidations(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    """
+    Fetch internal liquidation events from API.
+    
+    Args:
+        limit: Number of records to fetch
+        offset: Offset for pagination
+        
+    Returns:
+        Dict containing internal liquidations data or error information
+    """
+    try:
+        logger.info(f"Fetching internal liquidations (limit={limit}, offset={offset})...")
+        
+        response = await api_client.get_internal_liquidations(limit=limit, offset=offset)
+        
+        if isinstance(response, dict) and "error" in response:
+            logger.error(f"API error: {response['error']}")
+            return {
+                "error": response["error"],
+                "liquidations": [],
+                "count": 0,
+                "totalCount": 0
+            }
+        
+        liquidations = response.internalLiquidations
+        logger.info(f"Successfully fetched {len(liquidations)} internal liquidations")
+        
+        return {
+            "error": None,
+            "liquidations": liquidations,
+            "count": response.count,
+            "totalCount": response.totalCount
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch internal liquidations: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "liquidations": [],
+            "count": 0,
+            "totalCount": 0
+        }
+
+
+async def fetch_external_liquidations(limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    """
+    Fetch external liquidation events from API.
+    
+    Args:
+        limit: Number of records to fetch
+        offset: Offset for pagination
+        
+    Returns:
+        Dict containing external liquidations data or error information
+    """
+    try:
+        logger.info(f"Fetching external liquidations (limit={limit}, offset={offset})...")
+        
+        response = await api_client.get_external_liquidations(limit=limit, offset=offset)
+        
+        if isinstance(response, dict) and "error" in response:
+            logger.error(f"API error: {response['error']}")
+            return {
+                "error": response["error"],
+                "liquidations": [],
+                "count": 0,
+                "totalCount": 0
+            }
+        
+        liquidations = response.externalLiquidations
+        logger.info(f"Successfully fetched {len(liquidations)} external liquidations")
+        
+        return {
+            "error": None,
+            "liquidations": liquidations,
+            "count": response.count,
+            "totalCount": response.totalCount
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch external liquidations: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "liquidations": [],
+            "count": 0,
+            "totalCount": 0
+        }
+
+
+def format_internal_liquidations_for_table(liquidations: List) -> List[Dict[str, Any]]:
+    """
+    Format internal liquidations data for DataTable display.
+    
+    Args:
+        liquidations: List of InternalLiquidation objects
+        
+    Returns:
+        List of dictionaries formatted for display
+    """
+    table_data = []
+    
+    for liq in liquidations:
+        # Convert timestamps and block numbers
+        block_timestamp = int(liq.block_timestamp)
+        formatted_time = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Format USD values (divide by 1e18)
+        credit_reserved_usd = float(liq.credit_reserved_usd) / 1e18
+        debt_usd = float(liq.debt_usd) / 1e18
+        pre_total_collateral_usd = float(liq.pre_total_collateral_usd) / 1e18
+        total_collateral_usd = float(liq.total_assets_deposited_or_reserved_usd) / 1e18
+        
+        # Calculate collateral change
+        collateral_change = total_collateral_usd - pre_total_collateral_usd
+        
+        # Format LTV (divide by 1e18 and convert to percentage)
+        ltv_value = float(liq.twyne_liq_ltv) / 1e18 * 100
+        
+        row = {
+            "Block": int(liq.block_number),
+            "Timestamp": formatted_time,
+            "Collateral Vault": f"{liq.collateral_vault[:6]}...{liq.collateral_vault[-4:]}",
+            "Collateral Vault Full": liq.collateral_vault,
+            "Credit Vault": f"{liq.credit_vault[:6]}...{liq.credit_vault[-4:]}",
+            "Debt Vault": f"{liq.debt_vault[:6]}...{liq.debt_vault[-4:]}",
+            "Liquidator": f"{liq.liquidator_address[:6]}...{liq.liquidator_address[-4:]}",
+            "Credit Reserved (USD)": f"${credit_reserved_usd:,.2f}",
+            "Debt (USD)": f"${debt_usd:,.2f}",
+            "Pre-Liq Collateral (USD)": f"${pre_total_collateral_usd:,.2f}",
+            "Post-Liq Collateral (USD)": f"${total_collateral_usd:,.2f}",
+            "Collateral Change (USD)": f"${collateral_change:,.2f}",
+            "LTV (%)": f"{ltv_value:.2f}",
+            "Txn Hash": f"{liq.txn_hash[:6]}...{liq.txn_hash[-4:]}"
+        }
+        table_data.append(row)
+    
+    return table_data
+
+
+def format_external_liquidations_for_table(liquidations: List) -> List[Dict[str, Any]]:
+    """
+    Format external liquidations data for DataTable display.
+    
+    Args:
+        liquidations: List of ExternalLiquidation objects
+        
+    Returns:
+        List of dictionaries formatted for display
+    """
+    table_data = []
+    
+    for liq in liquidations:
+        # Convert timestamps
+        block_timestamp = int(liq.blockTimestamp)
+        formatted_time = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Format USD values (divide by 1e18)
+        repay_assets_usd = float(liq.repayAssetsUsd) / 1e18
+        yield_balance_usd = float(liq.yieldBalanceUsd) / 1e18
+        pre_collateral_usd = float(liq.preCollateralAmountUsd) / 1e18
+        post_collateral_usd = float(liq.collateralAmountUsd) / 1e18
+        pre_debt_usd = float(liq.preDebtAmountUsd) / 1e18
+        post_debt_usd = float(liq.debtAmountUsd) / 1e18
+        
+        # Calculate changes
+        collateral_change = post_collateral_usd - pre_collateral_usd
+        debt_change = post_debt_usd - pre_debt_usd
+        
+        # Format LTV (divide by 1e18 and convert to percentage)
+        liq_ltv_value = float(liq.liqLtv) / 1e18 * 100
+
+        ltv = (pre_debt_usd / pre_collateral_usd) * 100
+        
+        row = {
+            "Block": int(liq.blockNumber),
+            "Timestamp": formatted_time,
+            "Debt Vault Address": f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}",
+            "Debt Vault Address Full": liq.vaultAddress,
+            "Collateral Vault Address": f"{liq.collateral[:6]}...{liq.collateral[-4:]}",
+            "Collateral Vault Address Full": liq.collateral,
+            "Liquidator": f"{liq.liquidator[:6]}...{liq.liquidator[-4:]}",
+            "Violator": f"{liq.violator[:6]}...{liq.violator[-4:]}",
+            "Repay Assets (USD)": f"${repay_assets_usd:,.2f}",
+            "Yield Balance (USD)": f"${yield_balance_usd:,.2f}",
+            "Pre-Liq Collateral (USD)": f"${pre_collateral_usd:,.2f}",
+            "Post-Liq Collateral (USD)": f"${post_collateral_usd:,.2f}",
+            "Pre-Liq Debt (USD)": f"${pre_debt_usd:,.2f}",
+            "Post-Liq Debt (USD)": f"${post_debt_usd:,.2f}",
+            "LTV (%)": f"{ltv:.2f}",
+            "LLTV (%)": f"{liq_ltv_value:.2f}",
+            "Txn Hash": f"{liq.txnHash[:6]}...{liq.txnHash[-4:]}"
+        }
+        table_data.append(row)
+    
+    return table_data
+
+
+def get_internal_liquidations_table_columns() -> List[Dict[str, str]]:
+    """
+    Get column definitions for internal liquidations table.
+    
+    Returns:
+        List of column definitions
+    """
+    return [
+        {"name": "Block", "id": "Block"},
+        {"name": "Timestamp", "id": "Timestamp"},
+        {"name": "Collateral Vault", "id": "Collateral Vault"},
+        {"name": "Credit Vault", "id": "Credit Vault"},
+        {"name": "Debt Vault", "id": "Debt Vault"},
+        {"name": "Liquidator", "id": "Liquidator"},
+        {"name": "Credit Reserved (USD)", "id": "Credit Reserved (USD)"},
+        {"name": "Debt (USD)", "id": "Debt (USD)"},
+        {"name": "Pre-Liq Collateral (USD)", "id": "Pre-Liq Collateral (USD)"},
+        {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
+        {"name": "Collateral Change (USD)", "id": "Collateral Change (USD)"},
+        {"name": "LTV (%)", "id": "LTV (%)"},
+        {"name": "Txn Hash", "id": "Txn Hash"}
+    ]
+
+
+def get_external_liquidations_table_columns() -> List[Dict[str, str]]:
+    """
+    Get column definitions for external liquidations table.
+    
+    Returns:
+        List of column definitions
+    """
+    return [
+        {"name": "Timestamp", "id": "Timestamp"},
+        {"name": "Debt Vault Address", "id": "Debt Vault Address"},
+        {"name": "Collateral Vault Address", "id": "Collateral Vault Address"},
+        {"name": "Pre-Liq Collateral (USD)", "id": "Pre-Liq Collateral (USD)"},
+        {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
+        {"name": "Pre-Liq Debt (USD)", "id": "Pre-Liq Debt (USD)"},
+        {"name": "Post-Liq Debt (USD)", "id": "Post-Liq Debt (USD)"},
+        {"name": "LTV (%)", "id": "LTV (%)"},
+        {"name": "LLTV (%)", "id": "LLTV (%)"},
+        {"name": "Repay Assets (USD)", "id": "Repay Assets (USD)"},
+        {"name": "Yield Balance (USD)", "id": "Yield Balance (USD)"},
+        {"name": "Liquidator", "id": "Liquidator"},
+        {"name": "Violator", "id": "Violator"},
+        {"name": "Block", "id": "Block"},
+        {"name": "Txn Hash", "id": "Txn Hash"}
+    ]
+
+
+def LiquidationsSection(section_id: str = "liquidations-section") -> html.Div:
+    """
+    Create the Liquidations section component with mode toggle.
+    
+    Args:
+        section_id: Unique ID for the section
+        
+    Returns:
+        Liquidations section component
+    """
+    refresh_button = dbc.Button(
+        [html.I(className="fas fa-sync-alt me-2"), "Refresh"],
+        id=f"{section_id}-refresh",
+        color="outline-primary",
+        size="sm"
+    )
+    
+    # Liquidation mode toggle component
+    mode_toggle = dbc.Row([
+        dbc.Col([
+            html.Label("Liquidation Type:", className="fw-bold mb-2"),
+            dbc.ButtonGroup([
+                dbc.Button(
+                    "Internal",
+                    id=f"{section_id}-internal-btn",
+                    color="primary",
+                    outline=False,
+                    size="sm"
+                ),
+                dbc.Button(
+                    "External",
+                    id=f"{section_id}-external-btn",
+                    color="primary",
+                    outline=True,
+                    size="sm"
+                )
+            ])
+        ], width="auto"),
+        # Store for the selected mode
+        dcc.Store(id=f"{section_id}-mode", data="internal")
+    ], className="mb-3", justify="start")
+    
+    return SectionCard(
+        title="Liquidations",
+        icon="fas fa-bolt",
+        action_button=refresh_button,
+        children=[
+            # Mode toggle
+            mode_toggle,
+            
+            # Status message container
+            html.Div(id=f"{section_id}-status", className="mb-3"),
+            
+            # Table container
+            html.Div(id=f"{section_id}-table", className="mb-3"),
+            
+            # Last updated info
+            html.Div([
+                html.Small(id=f"{section_id}-last-updated", className="text-muted")
+            ], className="text-end")
+        ]
+    )
+
+
+# Callback for liquidation mode toggle
+@callback(
+    [Output("liquidations-section-mode", "data"),
+     Output("liquidations-section-internal-btn", "outline"),
+     Output("liquidations-section-external-btn", "outline")],
+    [Input("liquidations-section-internal-btn", "n_clicks"),
+     Input("liquidations-section-external-btn", "n_clicks")],
+    prevent_initial_call=True
+)
+def update_liquidations_mode_toggle(internal_clicks, external_clicks):
+    """
+    Update the liquidation mode selection based on button clicks.
+    
+    Args:
+        internal_clicks: Number of clicks on Internal button
+        external_clicks: Number of clicks on External button
+        
+    Returns:
+        Tuple of (selected_mode, internal_outline, external_outline)
+    """
+    from dash import callback_context
+    ctx = callback_context
+    if not ctx.triggered:
+        return "internal", False, True
+    
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    
+    if "internal" in button_id:
+        return "internal", False, True  # Internal selected, External not selected
+    else:
+        return "external", True, False  # Internal not selected, External selected
+
+
+# Callback for liquidations section
+@callback(
+    [Output("liquidations-section-status", "children"),
+     Output("liquidations-section-table", "children"),
+     Output("liquidations-section-last-updated", "children")],
+    [Input("liquidations-section-refresh", "n_clicks"),
+     Input("liquidations-section-mode", "data"),
+     Input("url", "pathname")],
+    prevent_initial_call=False
+)
+def update_liquidations_data(n_clicks, mode, pathname):
+    """
+    Update the liquidations table based on selected mode.
+    
+    Args:
+        n_clicks: Number of times refresh button was clicked
+        mode: Selected mode ("internal" or "external")
+        pathname: Current URL path
+        
+    Returns:
+        Tuple of (status_message, table_component, last_updated_text)
+    """
+    # Only update if we're on the liquidations page
+    if pathname != "/liquidations":
+        return "", "", ""
+    
+    logger.info(f"Updating liquidations data for {mode} mode...")
+    
+    # Fetch data based on mode
+    if mode == "internal":
+        data = run_async(fetch_internal_liquidations(limit=100))
+        mode_display = "Internal"
+    else:
+        data = run_async(fetch_external_liquidations(limit=100))
+        mode_display = "External"
+    
+    # Create status message
+    if data["error"]:
+        status_message = ErrorAlert(
+            message=f"Failed to fetch {mode_display.lower()} liquidations: {data['error']}",
+            title="API Error"
+        )
+        table_component = ErrorState(
+            error_message=f"Unable to load {mode_display.lower()} liquidations data",
+            retry_callback="liquidations-section-refresh"
+        )
+    else:
+        status_message = dbc.Alert(
+            f"Loaded {data['count']} {mode_display.lower()} liquidations (Total: {data['totalCount']})",
+            color="success",
+            dismissable=True,
+            duration=3000
+        )
+        
+        # Create table component
+        liquidations = data.get("liquidations", [])
+        
+        if liquidations:
+            if mode == "internal":
+                table_data = format_internal_liquidations_for_table(liquidations)
+                columns = get_internal_liquidations_table_columns()
+            else:
+                table_data = format_external_liquidations_for_table(liquidations)
+                columns = get_external_liquidations_table_columns()
+            
+            table_component = html.Div([
+                html.H5(f"{mode_display} Liquidations", className="mb-3"),
+                dash_table.DataTable(
+                    id=f"liquidations-{mode}-table",
+                    data=table_data,
+                    columns=columns,
+                    page_size=20,
+                    sort_action="native",
+                    filter_action="native",
+                    style_cell={
+                        'textAlign': 'left',
+                        'padding': '12px',
+                        'fontFamily': 'Arial, sans-serif',
+                        'fontSize': '14px',
+                        'whiteSpace': 'normal',
+                        'height': 'auto',
+                        'minWidth': '100px',
+                        'maxWidth': '200px'
+                    },
+                    style_header={
+                        'backgroundColor': 'rgb(230, 230, 230)',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_data_conditional=[
+                        {
+                            'if': {'row_index': 'odd'},
+                            'backgroundColor': 'rgb(248, 248, 248)'
+                        }
+                    ],
+                    style_table={'overflowX': 'auto'},
+                    export_format="csv",
+                    export_headers="display",
+                    tooltip_data=[
+                        {
+                            column: {'value': str(row.get(f"{column} Full", row.get(column, ""))), 'type': 'markdown'}
+                            for column in row.keys()
+                        } for row in table_data
+                    ],
+                    tooltip_duration=None
+                )
+            ])
+        else:
+            table_component = html.Div([
+                html.H5(f"{mode_display} Liquidations", className="mb-3"),
+                html.P(f"No {mode_display.lower()} liquidations found", className="text-muted text-center p-4")
+            ])
+    
+    # Last updated timestamp
+    last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
+    
+    return status_message, table_component, last_updated
