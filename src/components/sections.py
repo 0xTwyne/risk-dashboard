@@ -1324,24 +1324,27 @@ def format_external_liquidations_for_table(liquidations: List) -> List[Dict[str,
         debt_change = post_debt_usd - pre_debt_usd
         
         # Format LTV (divide by 1e18 and convert to percentage)
-        ltv_value = float(liq.liqLtv) / 1e18 * 100
+        liq_ltv_value = float(liq.liqLtv) / 1e18 * 100
+
+        ltv = (pre_debt_usd / pre_collateral_usd) * 100
         
         row = {
             "Block": int(liq.blockNumber),
             "Timestamp": formatted_time,
-            "Vault Address": f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}",
-            "Vault Address Full": liq.vaultAddress,
+            "Debt Vault Address": f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}",
+            "Debt Vault Address Full": liq.vaultAddress,
+            "Collateral Vault Address": f"{liq.collateral[:6]}...{liq.collateral[-4:]}",
+            "Collateral Vault Address Full": liq.collateral,
             "Liquidator": f"{liq.liquidator[:6]}...{liq.liquidator[-4:]}",
             "Violator": f"{liq.violator[:6]}...{liq.violator[-4:]}",
             "Repay Assets (USD)": f"${repay_assets_usd:,.2f}",
             "Yield Balance (USD)": f"${yield_balance_usd:,.2f}",
             "Pre-Liq Collateral (USD)": f"${pre_collateral_usd:,.2f}",
             "Post-Liq Collateral (USD)": f"${post_collateral_usd:,.2f}",
-            "Collateral Change (USD)": f"${collateral_change:,.2f}",
             "Pre-Liq Debt (USD)": f"${pre_debt_usd:,.2f}",
             "Post-Liq Debt (USD)": f"${post_debt_usd:,.2f}",
-            "Debt Change (USD)": f"${debt_change:,.2f}",
-            "LTV (%)": f"{ltv_value:.2f}",
+            "LTV (%)": f"{ltv:.2f}",
+            "LLTV (%)": f"{liq_ltv_value:.2f}",
             "Txn Hash": f"{liq.txnHash[:6]}...{liq.txnHash[-4:]}"
         }
         table_data.append(row)
@@ -1381,20 +1384,20 @@ def get_external_liquidations_table_columns() -> List[Dict[str, str]]:
         List of column definitions
     """
     return [
-        {"name": "Block", "id": "Block"},
         {"name": "Timestamp", "id": "Timestamp"},
-        {"name": "Vault Address", "id": "Vault Address"},
-        {"name": "Liquidator", "id": "Liquidator"},
-        {"name": "Violator", "id": "Violator"},
-        {"name": "Repay Assets (USD)", "id": "Repay Assets (USD)"},
-        {"name": "Yield Balance (USD)", "id": "Yield Balance (USD)"},
+        {"name": "Debt Vault Address", "id": "Debt Vault Address"},
+        {"name": "Collateral Vault Address", "id": "Collateral Vault Address"},
         {"name": "Pre-Liq Collateral (USD)", "id": "Pre-Liq Collateral (USD)"},
         {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
-        {"name": "Collateral Change (USD)", "id": "Collateral Change (USD)"},
         {"name": "Pre-Liq Debt (USD)", "id": "Pre-Liq Debt (USD)"},
         {"name": "Post-Liq Debt (USD)", "id": "Post-Liq Debt (USD)"},
-        {"name": "Debt Change (USD)", "id": "Debt Change (USD)"},
         {"name": "LTV (%)", "id": "LTV (%)"},
+        {"name": "LLTV (%)", "id": "LLTV (%)"},
+        {"name": "Repay Assets (USD)", "id": "Repay Assets (USD)"},
+        {"name": "Yield Balance (USD)", "id": "Yield Balance (USD)"},
+        {"name": "Liquidator", "id": "Liquidator"},
+        {"name": "Violator", "id": "Violator"},
+        {"name": "Block", "id": "Block"},
         {"name": "Txn Hash", "id": "Txn Hash"}
     ]
 
