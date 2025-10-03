@@ -56,6 +56,7 @@ import pages.home
 import pages.collateral_vaults
 import pages.evaults
 import pages.evault_detail
+import pages.liquidations
 logger.info("Pages registered successfully")
 
 # Run the app

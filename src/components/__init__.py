@@ -5,7 +5,7 @@ from .layouts import DashboardHeader, PageContainer, SectionCard, LoadingSpinner
 from .loading import LoadingState, ErrorState, EmptyState
 from .tables import DataTable, SimpleTable
 from .charts import create_line_chart, create_bar_chart, create_pie_chart, create_health_factor_scatter_plot
-from .sections import CollateralVaultsSection, EVaultsSection
+from .sections import CollateralVaultsSection, EVaultsSection, LiquidationsSection
 
 __all__ = [
     # Cards
@@ -33,5 +33,6 @@ __all__ = [
     "create_health_factor_scatter_plot",
     # Sections
     "CollateralVaultsSection",
-    "EVaultsSection"
+    "EVaultsSection",
+    "LiquidationsSection"
 ]
