@@ -36,13 +36,37 @@ class APIClient:
     def __init__(self):
         self.config = Config()
         self._client = None
+        self._client_loop = None  # Track which event loop created the client
         
         logger.info("APIClient initialized")
         logger.info(f"API Base URL: {self.config.API_BASE_URL}")
     
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client with retry configuration."""
-        if self._client is None or self._client.is_closed:
+        """
+        Get or create async HTTP client with retry configuration.
+        Recreates client if event loop has changed to prevent 'Event loop is closed' errors.
+        """
+        current_loop = asyncio.get_event_loop()
+        
+        # Recreate client if:
+        # 1. Client doesn't exist
+        # 2. Client is closed
+        # 3. Client was created in a different event loop
+        needs_new_client = (
+            self._client is None or 
+            self._client.is_closed or 
+            self._client_loop is not current_loop
+        )
+        
+        if needs_new_client:
+            # Close existing client if it exists and is open
+            if self._client is not None and not self._client.is_closed:
+                try:
+                    await self._client.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing existing client: {e}")
+            
+            # Create new client
             transport = httpx.AsyncHTTPTransport(retries=self.config.API_MAX_RETRIES)
             self._client = httpx.AsyncClient(
                 transport=transport,
@@ -50,6 +74,9 @@ class APIClient:
                 timeout=self.config.API_TIMEOUT,
                 follow_redirects=True
             )
+            self._client_loop = current_loop
+            logger.debug(f"Created new HTTPx client for event loop {id(current_loop)}")
+        
         return self._client
     
     async def close(self):
