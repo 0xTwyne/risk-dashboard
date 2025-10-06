@@ -308,16 +308,16 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
             # Status message container
             html.Div(id=f"{section_id}-status", className="mb-3"),
             
-            # Credit Flow Sankey Diagram container
-            html.Div(id=f"{section_id}-sankey-chart", className="mb-4"),
-            
-            # Health Factor Chart container
+            # Health Factor Chart container (moved to top)
             html.Div(id=f"{section_id}-health-chart", className="mb-4"),
             
-            # LTV vs Position Size Heatmap container
+            # LTV vs Position Size Heatmap container (second)
             html.Div(id=f"{section_id}-ltv-heatmap", className="mb-4"),
             
-            # Table container
+            # Credit Flow Sankey Diagram container (third)
+            html.Div(id=f"{section_id}-sankey-chart", className="mb-4"),
+            
+            # Table container (stays at bottom)
             html.Div(id=f"{section_id}-table", className="mb-3"),
             
             # Last updated info
