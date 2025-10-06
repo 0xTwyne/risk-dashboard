@@ -24,13 +24,15 @@ from src.utils.usd_calculations import (
 from src.utils.health_factor import (
     calculate_health_factors_for_snapshots,
     get_health_factor_summary_stats,
-    calculate_ltv_position_data_for_heatmap
+    calculate_ltv_position_data_for_heatmap,
+    prepare_sankey_data_for_credit_flow
 )
 from src.utils.block_snapshot import format_block_snapshot_for_table
 from .charts import (
     create_health_factor_scatter_plot,
     create_multi_vault_utilization_chart,
-    create_ltv_position_heatmap
+    create_ltv_position_heatmap,
+    create_credit_flow_sankey
 )
 
 logger = logging.getLogger(__name__)
@@ -305,6 +307,9 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
             
             # Status message container
             html.Div(id=f"{section_id}-status", className="mb-3"),
+            
+            # Credit Flow Sankey Diagram container
+            html.Div(id=f"{section_id}-sankey-chart", className="mb-4"),
             
             # Health Factor Chart container
             html.Div(id=f"{section_id}-health-chart", className="mb-4"),
@@ -672,6 +677,7 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
 @callback(
     [Output("collateral-section-metrics", "children"),
      Output("collateral-section-status", "children"),
+     Output("collateral-section-sankey-chart", "children"),
      Output("collateral-section-health-chart", "children"),
      Output("collateral-section-ltv-heatmap", "children"),
      Output("collateral-section-table", "children"),
@@ -691,11 +697,11 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         selected_block: Block number to fetch data for (None for latest)
         
     Returns:
-        Tuple of (metrics_cards, status_message, health_chart, ltv_heatmap, table_component, last_updated_text)
+        Tuple of (metrics_cards, status_message, sankey_chart, health_chart, ltv_heatmap, table_component, last_updated_text)
     """
     # Only update if we're on the collateral vaults page
     if pathname != "/collateralVaults":
-        return [], "", "", "", "", ""
+        return [], "", "", "", "", "", ""
     
     if selected_block is not None:
         logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
@@ -711,6 +717,9 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
             title="API Error"
         )
         metrics_cards = []
+        sankey_chart = html.Div([
+            html.P("Credit flow Sankey diagram unavailable due to API error", className="text-muted text-center p-4")
+        ])
         health_chart = html.Div([
             html.P("Health Factor chart unavailable due to API error", className="text-muted text-center p-4")
         ])
@@ -796,8 +805,22 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
             ], width=12, md=6, lg=4)
         ], className="g-3")
         
-        # Create health factor chart
+        # Create credit flow Sankey diagram
         enhanced_snapshots = data.get("enhanced_snapshots", [])
+        if enhanced_snapshots:
+            # Prepare Sankey data
+            sankey_data = prepare_sankey_data_for_credit_flow(enhanced_snapshots)
+            sankey_chart = html.Div([
+                html.H5("Credit Flow Analysis", className="mb-3"),
+                create_credit_flow_sankey(sankey_data, "Credit Vaults → Debt Vaults")
+            ])
+        else:
+            sankey_chart = html.Div([
+                html.H5("Credit Flow Analysis", className="mb-3"),
+                html.P("No data available for credit flow analysis", className="text-muted text-center p-4")
+            ])
+        
+        # Create health factor chart
         if enhanced_snapshots:
             # Calculate health factors for chart
             chart_data = calculate_health_factors_for_snapshots(enhanced_snapshots)
@@ -884,7 +907,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     else:
         last_updated = f"Latest data - Updated: {datetime.now().strftime('%H:%M:%S')}"
     
-    return metrics_cards, status_message, health_chart, ltv_heatmap, table_component, last_updated
+    return metrics_cards, status_message, sankey_chart, health_chart, ltv_heatmap, table_component, last_updated
 
 
 # Callback for vault type toggle

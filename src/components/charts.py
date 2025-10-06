@@ -288,6 +288,107 @@ def create_health_factor_scatter_plot(
     )
 
 
+def create_credit_flow_sankey(
+    sankey_data: Dict[str, Any],
+    title: str = "Credit Flow: Credit Vaults → Debt Vaults"
+) -> dcc.Graph:
+    """
+    Create a 2-tier Sankey diagram showing credit flow from credit vaults to debt vaults.
+    
+    Args:
+        sankey_data: Dictionary with 'labels', 'source', 'target', 'value', 'colors',
+                     'num_credit', 'num_debt'
+        title: Chart title
+        
+    Returns:
+        Plotly graph component with Sankey diagram
+    """
+    if not sankey_data.get('labels') or not sankey_data.get('source'):
+        # Return empty chart with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No credit flow data available",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=16, color="gray")
+        )
+        fig.update_layout(
+            title=title,
+            template="plotly_white",
+            height=600
+        )
+        return dcc.Graph(figure=fig)
+    
+    # Get tier counts
+    num_credit = sankey_data.get('num_credit', 0)
+    num_debt = sankey_data.get('num_debt', 0)
+    
+    # Format labels to show shortened addresses with tier prefix
+    formatted_labels = []
+    customdata_labels = []
+    
+    for i, label in enumerate(sankey_data['labels']):
+        # Determine which tier this node belongs to
+        if i < num_credit:
+            tier_prefix = "Credit: "
+        else:
+            tier_prefix = "Debt: "
+        
+        # Shorten Ethereum addresses
+        if len(label) > 42:  # Ethereum address length
+            short_label = f"{label[:6]}...{label[-4:]}"
+        else:
+            short_label = label
+        
+        formatted_labels.append(f"{tier_prefix}{short_label}")
+        customdata_labels.append(f"{tier_prefix}{label}")
+    
+    # Create the Sankey diagram
+    fig = go.Figure(data=[go.Sankey(
+        valueformat="$,.2f",
+        valuesuffix=" USD",
+        arrangement="snap",
+        node=dict(
+            pad=15,
+            thickness=20,
+            line=dict(color="black", width=0.5),
+            label=formatted_labels,
+            color=sankey_data['colors'],
+            customdata=customdata_labels,  # Store full addresses with tier info
+            hovertemplate='%{customdata}<br />Total Flow: %{value}<extra></extra>'
+        ),
+        link=dict(
+            source=sankey_data['source'],
+            target=sankey_data['target'],
+            value=sankey_data['value'],
+            color='rgba(0, 0, 0, 0.2)',  # Semi-transparent links
+            hovertemplate='From: %{source.customdata}<br />'+
+                         'To: %{target.customdata}<br />'+
+                         'Amount: $%{value:,.2f}<extra></extra>'
+        )
+    )])
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        font=dict(size=10),
+        template="plotly_white",
+        height=600,
+        margin=dict(l=20, r=20, t=60, b=20)
+    )
+    
+    return dcc.Graph(
+        figure=fig,
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d']
+        }
+    )
+
+
 def create_ltv_position_heatmap(
     heatmap_data: List[Tuple[float, float, str]],
     title: str = "Position Size vs User LTV Distribution"
