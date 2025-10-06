@@ -288,6 +288,94 @@ def create_health_factor_scatter_plot(
     )
 
 
+def create_ltv_position_heatmap(
+    heatmap_data: List[Tuple[float, float, str]],
+    title: str = "Position Size vs User LTV Distribution"
+) -> dcc.Graph:
+    """
+    Create a density heatmap showing Position Size (log scale) vs LTV.
+    Cell colors represent the number of observations (density).
+    
+    Args:
+        heatmap_data: List of tuples (ltv, position_size, vault_address)
+        title: Chart title
+        
+    Returns:
+        Plotly graph component with heatmap
+    """
+    if not heatmap_data:
+        # Return empty chart with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available for heatmap",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=16, color="gray")
+        )
+        fig.update_layout(
+            title=title,
+            template="plotly_white",
+            height=500
+        )
+        return dcc.Graph(figure=fig)
+    
+    # Extract LTV and Position Size values
+    ltv_values = [point[0] for point in heatmap_data]
+    position_sizes = [point[1] for point in heatmap_data]
+    
+    # Apply log transformation to position sizes for the y-axis
+    log_position_sizes = [np.log10(ps) if ps > 0 else 0 for ps in position_sizes]
+    
+    # Create the 2D histogram heatmap
+    fig = go.Figure()
+    
+    # Use Histogram2d for density heatmap
+    fig.add_trace(go.Histogram2d(
+        x=ltv_values,
+        y=log_position_sizes,
+        colorscale='RdBu',  
+        nbinsx=10,  # Number of bins on x-axis
+        nbinsy=10,  # Number of bins on y-axis
+        colorbar=dict(
+            title=dict(text="Count")
+        ),
+        hovertemplate='LTV: %{x:.2f}<br>Log10(Position Size): %{y:.2f}<br>Count: %{z}<extra></extra>'
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        xaxis_title="User LTV",
+        yaxis_title="Log10(User Position Size [USD])",
+        template="plotly_white",
+        height=500,
+        showlegend=False,
+        hovermode='closest'
+    )
+    
+    # Set reasonable axis ranges
+    if ltv_values and log_position_sizes:
+        # X-axis (LTV) typically ranges from 0 to 1 (or slightly above)
+        max_ltv = max(ltv_values)
+        fig.update_xaxes(range=[0, min(max_ltv * 1.1, 1.0)])
+        
+        # Y-axis (log position size)
+        min_log_ps = min(log_position_sizes)
+        max_log_ps = max(log_position_sizes)
+        fig.update_yaxes(range=[min_log_ps - 0.5, max_log_ps + 0.5])
+    
+    return dcc.Graph(
+        figure=fig,
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d']
+        }
+    )
+
+
 def create_multi_vault_utilization_chart(
     vault_data: List[Dict[str, Any]],
     title: str = ""

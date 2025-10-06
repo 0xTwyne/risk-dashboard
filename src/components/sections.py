@@ -23,10 +23,15 @@ from src.utils.usd_calculations import (
 )
 from src.utils.health_factor import (
     calculate_health_factors_for_snapshots,
-    get_health_factor_summary_stats
+    get_health_factor_summary_stats,
+    calculate_ltv_position_data_for_heatmap
 )
 from src.utils.block_snapshot import format_block_snapshot_for_table
-from .charts import create_health_factor_scatter_plot, create_multi_vault_utilization_chart
+from .charts import (
+    create_health_factor_scatter_plot,
+    create_multi_vault_utilization_chart,
+    create_ltv_position_heatmap
+)
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +308,9 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
             
             # Health Factor Chart container
             html.Div(id=f"{section_id}-health-chart", className="mb-4"),
+            
+            # LTV vs Position Size Heatmap container
+            html.Div(id=f"{section_id}-ltv-heatmap", className="mb-4"),
             
             # Table container
             html.Div(id=f"{section_id}-table", className="mb-3"),
@@ -665,6 +673,7 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
     [Output("collateral-section-metrics", "children"),
      Output("collateral-section-status", "children"),
      Output("collateral-section-health-chart", "children"),
+     Output("collateral-section-ltv-heatmap", "children"),
      Output("collateral-section-table", "children"),
      Output("collateral-section-last-updated", "children")],
     [Input("collateral-section-refresh", "n_clicks"),
@@ -682,11 +691,11 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         selected_block: Block number to fetch data for (None for latest)
         
     Returns:
-        Tuple of (metrics_cards, status_message, health_chart, table_component, last_updated_text)
+        Tuple of (metrics_cards, status_message, health_chart, ltv_heatmap, table_component, last_updated_text)
     """
     # Only update if we're on the collateral vaults page
     if pathname != "/collateralVaults":
-        return [], "", "", "", ""
+        return [], "", "", "", "", ""
     
     if selected_block is not None:
         logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
@@ -704,6 +713,9 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         metrics_cards = []
         health_chart = html.Div([
             html.P("Health Factor chart unavailable due to API error", className="text-muted text-center p-4")
+        ])
+        ltv_heatmap = html.Div([
+            html.P("LTV vs Position Size heatmap unavailable due to API error", className="text-muted text-center p-4")
         ])
         table_component = ErrorState(
             error_message="Unable to load table data due to API error",
@@ -799,6 +811,20 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                 html.P("No data available for health factor analysis", className="text-muted text-center p-4")
             ])
         
+        # Create LTV vs Position Size heatmap
+        if enhanced_snapshots:
+            # Calculate LTV and position size data for heatmap
+            heatmap_data = calculate_ltv_position_data_for_heatmap(enhanced_snapshots)
+            ltv_heatmap = html.Div([
+                html.H5("User LTV vs Position Size Distribution", className="mb-3"),
+                create_ltv_position_heatmap(heatmap_data, "Position Size vs User LTV Distribution")
+            ])
+        else:
+            ltv_heatmap = html.Div([
+                html.H5("User LTV vs Position Size Distribution", className="mb-3"),
+                html.P("No data available for LTV vs Position Size heatmap", className="text-muted text-center p-4")
+            ])
+        
         # Create table component
         if data.get("enhanced_snapshots"):
             table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"])
@@ -858,7 +884,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     else:
         last_updated = f"Latest data - Updated: {datetime.now().strftime('%H:%M:%S')}"
     
-    return metrics_cards, status_message, health_chart, table_component, last_updated
+    return metrics_cards, status_message, health_chart, ltv_heatmap, table_component, last_updated
 
 
 # Callback for vault type toggle

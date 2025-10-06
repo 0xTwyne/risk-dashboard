@@ -138,3 +138,49 @@ def get_health_factor_summary_stats(
         'min_health_factor': min(health_factors),
         'max_health_factor': max(health_factors)
     }
+
+
+def calculate_ltv_position_data_for_heatmap(
+    enhanced_snapshots: List[Dict[str, Any]]
+) -> List[Tuple[float, float, str]]:
+    """
+    Calculate LTV and Position Size for heatmap visualization.
+    
+    Args:
+        enhanced_snapshots: List of enhanced snapshot dictionaries
+        
+    Returns:
+        List of tuples (ltv, position_size, vault_address) for heatmap data
+    """
+    heatmap_data = []
+    
+    for enhanced_snapshot in enhanced_snapshots:
+        try:
+            usd_values = enhanced_snapshot['calculated_usd_values']
+            
+            # Get collateral and debt USD values
+            collateral_usd = usd_values.get('user_collateral_usd', 0.0)
+            debt_usd = usd_values.get('max_repay_usd', 0.0)
+            vault_address = enhanced_snapshot.get('vault_address', 'unknown')
+            
+            # Skip positions with zero collateral (cannot calculate LTV)
+            if collateral_usd == 0.0:
+                continue
+            
+            # Calculate LTV = DebtUSD / CollateralUSD
+            ltv = debt_usd / collateral_usd
+            
+            # Calculate Position Size = CollateralUSD - DebtUSD
+            position_size = collateral_usd - debt_usd
+            
+            # Only include positions with positive position size
+            if position_size > 0:
+                heatmap_data.append((ltv, position_size, vault_address))
+                
+        except Exception as e:
+            vault_address = enhanced_snapshot.get('vault_address', 'unknown')
+            logger.error(f"Failed to process snapshot {vault_address} for heatmap: {str(e)}")
+            continue
+    
+    logger.info(f"Prepared {len(heatmap_data)} data points for LTV vs Position Size heatmap")
+    return heatmap_data
