@@ -12,6 +12,7 @@ from dash import html, dcc, callback, Output, Input, State, dash_table
 import dash_bootstrap_components as dbc
 
 from src.components import PageContainer, SectionCard, MetricCard, LoadingState, ErrorState, ErrorAlert
+from src.components.sections import create_address_tooltips
 from src.api import api_client
 from src.api.block_snapshot_client import block_snapshot_client
 from src.utils.usd_calculations import (
@@ -257,8 +258,8 @@ def format_history_for_table(snapshots: List) -> List[Dict[str, Any]]:
             "Block Number": int(snapshot.blockNumber),
             "Block Timestamp": block_timestamp,
             "Chain ID": snapshot.chainId,
-            "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
-            "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
+            "Credit Vault": snapshot.creditVault,  # Store full address for copying
+            "Debt Vault": snapshot.debtVault,  # Store full address for copying
             "Max Release (USD)": max_release_usd,
             "Max Repay (USD)": max_repay_usd,
             "Total Assets (USD)": total_assets_usd,
@@ -772,6 +773,11 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
             # Sort table data by block number descending
             table_data.sort(key=lambda x: x["Block Number"], reverse=True)
             
+            # Create tooltips for address columns
+            address_tooltips = create_address_tooltips(table_data, [
+                "Credit Vault", "Debt Vault"
+            ])
+            
             table_component = html.Div([
                 html.H5("Collateral Vault History", className="mb-3"),
                 dash_table.DataTable(
@@ -787,12 +793,21 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
                         'padding': '12px',
                         'fontFamily': 'Arial, sans-serif',
                         'fontSize': '14px',
-                        'whiteSpace': 'normal',
+                        'whiteSpace': 'nowrap',
                         'height': 'auto',
                         'maxWidth': '200px',
                         'overflow': 'hidden',
                         'textOverflow': 'ellipsis'
                     },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': ['Credit Vault', 'Debt Vault']},
+                            'maxWidth': '120px',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'whiteSpace': 'nowrap'
+                        }
+                    ],
                     style_header={
                         'backgroundColor': 'rgb(230, 230, 230)',
                         'fontWeight': 'bold',
@@ -817,13 +832,12 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, n
                     style_table={'overflowX': 'auto'},
                     export_format="csv",
                     export_headers="display",
-                    tooltip_data=[
-                        {
-                            column: {'value': str(row[column]), 'type': 'markdown'}
-                            for column in row.keys()
-                        } for row in table_data
-                    ],
-                    tooltip_duration=None
+                    tooltip_data=address_tooltips,
+                    tooltip_duration=None,
+                    css=[{
+                        'selector': '.dash-table-tooltip',
+                        'rule': 'background-color: #2c3e50; color: white; border: none; font-family: monospace; padding: 8px; max-width: 500px; word-wrap: break-word;'
+                    }]
                 )
             ])
         else:

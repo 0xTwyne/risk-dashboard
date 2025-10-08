@@ -38,6 +38,33 @@ from .charts import (
 logger = logging.getLogger(__name__)
 
 
+def create_address_tooltips(table_data: List[Dict[str, Any]], address_columns: List[str]) -> List[Dict[str, Any]]:
+    """
+    Create tooltip data for address columns showing full addresses.
+    
+    Args:
+        table_data: List of table row dictionaries
+        address_columns: List of column names that contain addresses to show in tooltips
+    
+    Returns:
+        List of tooltip dictionaries for each row
+    """
+    tooltip_data = []
+    
+    for row in table_data:
+        tooltip_row = {}
+        for col in address_columns:
+            if col in row:
+                address_value = row[col]
+                tooltip_row[col] = {
+                    'value': str(address_value),
+                    'type': 'text'
+                }
+        tooltip_data.append(tooltip_row)
+    
+    return tooltip_data
+
+
 def run_async(coro):
     """
     Helper to run async functions in sync callbacks.
@@ -587,11 +614,10 @@ def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
         
         row = {
             "Chain ID": metric.chainId,
-            "Vault Address": metric.vaultAddress[:10] + "..." if len(metric.vaultAddress) > 10 else metric.vaultAddress,
-            "Full Vault Address": metric.vaultAddress,  # Store full address for navigation
+            "Vault Address": metric.vaultAddress,  # Store full address for copying
             "Name": metric.name,
             "Symbol": metric.symbol,
-            "Asset": metric.asset[:10] + "..." if len(metric.asset) > 10 else metric.asset,
+            "Asset": metric.asset,  # Store full address for copying
             "Total Assets": total_assets,
             "Total Assets (USD)": total_assets_usd,
             "Total Borrows": total_borrows,
@@ -884,6 +910,12 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         # Create table component
         if data.get("enhanced_snapshots"):
             table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"], symbol_mapping)
+            
+            # Create tooltips for address columns
+            address_tooltips = create_address_tooltips(table_data, [
+                "Vault Address", "Credit Vault", "Debt Vault"
+            ])
+            
             table_component = html.Div([
                 html.H5("Collateral Vaults Snapshots", className="mb-3"),
                 dash_table.DataTable(
@@ -898,9 +930,21 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                         'padding': '12px',
                         'fontFamily': 'Arial, sans-serif',
                         'fontSize': '14px',
-                        'whiteSpace': 'normal',
-                        'height': 'auto'
+                        'whiteSpace': 'nowrap',
+                        'height': 'auto',
+                        'maxWidth': '150px',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis'
                     },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': ['Vault Address', 'Credit Vault', 'Debt Vault']},
+                            'maxWidth': '120px',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'whiteSpace': 'nowrap'
+                        }
+                    ],
                     style_header={
                         'backgroundColor': 'rgb(230, 230, 230)',
                         'fontWeight': 'bold',
@@ -919,7 +963,13 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                     ],
                     style_table={'overflowX': 'auto'},
                     export_format="csv",
-                    export_headers="display"
+                    export_headers="display",
+                    tooltip_data=address_tooltips,
+                    tooltip_duration=None,
+                    css=[{
+                        'selector': '.dash-table-tooltip',
+                        'rule': 'background-color: #2c3e50; color: white; border: none; font-family: monospace; padding: 8px; max-width: 500px; word-wrap: break-word;'
+                    }]
                 )
             ])
         else:
@@ -1144,6 +1194,12 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
         # Create table component using filtered data
         if filtered_metrics:
             table_data = format_evaults_for_table(filtered_metrics)
+            
+            # Create tooltips for address columns
+            address_tooltips = create_address_tooltips(table_data, [
+                "Vault Address", "Asset"
+            ])
+            
             table_component = html.Div([
                 html.H5(f"{vault_type_display} EVaults Metrics", className="mb-3"),
                 dash_table.DataTable(
@@ -1158,9 +1214,21 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                         'padding': '12px',
                         'fontFamily': 'Arial, sans-serif',
                         'fontSize': '14px',
-                        'whiteSpace': 'normal',
-                        'height': 'auto'
+                        'whiteSpace': 'nowrap',
+                        'height': 'auto',
+                        'maxWidth': '150px',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis'
                     },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': ['Vault Address', 'Asset']},
+                            'maxWidth': '120px',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'whiteSpace': 'nowrap'
+                        }
+                    ],
                     style_header={
                         'backgroundColor': 'rgb(230, 230, 230)',
                         'fontWeight': 'bold',
@@ -1191,7 +1259,13 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                     ],
                     style_table={'overflowX': 'auto'},
                     export_format="csv",
-                    export_headers="display"
+                    export_headers="display",
+                    tooltip_data=address_tooltips,
+                    tooltip_duration=None,
+                    css=[{
+                        'selector': '.dash-table-tooltip',
+                        'rule': 'background-color: #2c3e50; color: white; border: none; font-family: monospace; padding: 8px; max-width: 500px; word-wrap: break-word;'
+                    }]
                 )
             ])
         else:
@@ -1359,28 +1433,25 @@ def format_internal_liquidations_for_table(liquidations: List, symbol_mapping: D
         # Format LTV (divide by 1e18 and convert to percentage)
         ltv_value = float(liq.twyne_liq_ltv) / 1e18 * 100
         
-        # Get symbols or fallback to shortened addresses
-        collateral_vault_symbol = symbol_mapping.get(liq.collateral_vault.lower(), f"{liq.collateral_vault[:6]}...{liq.collateral_vault[-4:]}")
-        credit_vault_symbol = symbol_mapping.get(liq.credit_vault.lower(), f"{liq.credit_vault[:6]}...{liq.credit_vault[-4:]}")
-        debt_vault_symbol = symbol_mapping.get(liq.debt_vault.lower(), f"{liq.debt_vault[:6]}...{liq.debt_vault[-4:]}")
+        # Get symbols or use full addresses (for copying)
+        collateral_vault_display = symbol_mapping.get(liq.collateral_vault.lower(), liq.collateral_vault)
+        credit_vault_display = symbol_mapping.get(liq.credit_vault.lower(), liq.credit_vault)
+        debt_vault_display = symbol_mapping.get(liq.debt_vault.lower(), liq.debt_vault)
         
         row = {
             "Block": int(liq.block_number),
             "Timestamp": formatted_time,
-            "Collateral Vault": collateral_vault_symbol,
-            "Collateral Vault Full": liq.collateral_vault,
-            "Credit Vault": credit_vault_symbol,
-            "Credit Vault Full": liq.credit_vault,
-            "Debt Vault": debt_vault_symbol,
-            "Debt Vault Full": liq.debt_vault,
-            "Liquidator": f"{liq.liquidator_address[:6]}...{liq.liquidator_address[-4:]}",
+            "Collateral Vault": collateral_vault_display,
+            "Credit Vault": credit_vault_display,
+            "Debt Vault": debt_vault_display,
+            "Liquidator": liq.liquidator_address,
             "Credit Reserved (USD)": f"${credit_reserved_usd:,.2f}",
             "Debt (USD)": f"${debt_usd:,.2f}",
             "Pre-Liq Collateral (USD)": f"${pre_total_collateral_usd:,.2f}",
             "Post-Liq Collateral (USD)": f"${total_collateral_usd:,.2f}",
             "Collateral Change (USD)": f"${collateral_change:,.2f}",
             "LTV (%)": f"{ltv_value:.2f}",
-            "Txn Hash": f"{liq.txn_hash[:6]}...{liq.txn_hash[-4:]}"
+            "Txn Hash": liq.txn_hash
         }
         table_data.append(row)
     
@@ -1425,22 +1496,19 @@ def format_external_liquidations_for_table(liquidations: List, symbol_mapping: D
 
         ltv = (pre_debt_usd / pre_collateral_usd) * 100
         
-        # Get symbols or fallback to shortened addresses
-        collateral_symbol = symbol_mapping.get(liq.collateral.lower(), f"{liq.collateral[:6]}...{liq.collateral[-4:]}")
-        debt_vault_symbol = symbol_mapping.get(liq.vaultAddress.lower(), f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}")
-        credit_vault_symbol = symbol_mapping.get(liq.creditVault.lower(), f"{liq.creditVault[:6]}...{liq.creditVault[-4:]}")
+        # Get symbols or use full addresses (for copying)
+        collateral_display = symbol_mapping.get(liq.collateral.lower(), liq.collateral)
+        debt_vault_display = symbol_mapping.get(liq.vaultAddress.lower(), liq.vaultAddress)
+        credit_vault_display = symbol_mapping.get(liq.creditVault.lower(), liq.creditVault)
         
         row = {
             "Block": int(liq.blockNumber),
             "Timestamp": formatted_time,
-            "Underlying Collateral Vault": collateral_symbol,
-            "Underlying Collateral Vault Address Full": liq.collateral,
-            "Debt Vault": debt_vault_symbol,
-            "Debt Vault Address Full": liq.vaultAddress,
-            "Credit Vault": credit_vault_symbol,
-            "Credit Vault Address Full": liq.creditVault,
-            "Liquidator": f"{liq.liquidator[:6]}...{liq.liquidator[-4:]}",
-            "Violator": f"{liq.violator[:6]}...{liq.violator[-4:]}",
+            "Underlying Collateral Vault": collateral_display,
+            "Debt Vault": debt_vault_display,
+            "Credit Vault": credit_vault_display,
+            "Liquidator": liq.liquidator,
+            "Violator": liq.violator,
             "Repay Assets (USD)": f"${repay_assets_usd:,.2f}",
             "Yield Balance (USD)": f"${yield_balance_usd:,.2f}",
             "Pre-Liq Collateral (USD)": f"${pre_collateral_usd:,.2f}",
@@ -1449,7 +1517,7 @@ def format_external_liquidations_for_table(liquidations: List, symbol_mapping: D
             "Post-Liq Debt (USD)": f"${post_debt_usd:,.2f}",
             "LTV (%)": f"{ltv:.2f}",
             "LLTV (%)": f"{liq_ltv_value:.2f}",
-            "Txn Hash": f"{liq.txnHash[:6]}...{liq.txnHash[-4:]}"
+            "Txn Hash": liq.txnHash
         }
         table_data.append(row)
     
@@ -1669,9 +1737,22 @@ def update_liquidations_data(n_clicks, mode, pathname):
             if mode == "internal":
                 table_data = format_internal_liquidations_for_table(liquidations, symbol_mapping)
                 columns = get_internal_liquidations_table_columns()
+                # Define address columns for internal liquidations
+                address_columns = [
+                    "Collateral Vault", "Credit Vault", "Debt Vault", 
+                    "Liquidator", "Txn Hash"
+                ]
             else:
                 table_data = format_external_liquidations_for_table(liquidations, symbol_mapping)
                 columns = get_external_liquidations_table_columns()
+                # Define address columns for external liquidations
+                address_columns = [
+                    "Underlying Collateral Vault", "Credit Vault", "Debt Vault",
+                    "Liquidator", "Violator", "Txn Hash"
+                ]
+            
+            # Create tooltips for address columns
+            address_tooltips = create_address_tooltips(table_data, address_columns)
             
             table_component = html.Div([
                 html.H5(f"{mode_display} Liquidations", className="mb-3"),
@@ -1687,11 +1768,22 @@ def update_liquidations_data(n_clicks, mode, pathname):
                         'padding': '12px',
                         'fontFamily': 'Arial, sans-serif',
                         'fontSize': '14px',
-                        'whiteSpace': 'normal',
+                        'whiteSpace': 'nowrap',
                         'height': 'auto',
                         'minWidth': '100px',
-                        'maxWidth': '200px'
+                        'maxWidth': '200px',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis'
                     },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': address_columns},
+                            'maxWidth': '150px',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'whiteSpace': 'nowrap'
+                        }
+                    ],
                     style_header={
                         'backgroundColor': 'rgb(230, 230, 230)',
                         'fontWeight': 'bold',
@@ -1706,13 +1798,12 @@ def update_liquidations_data(n_clicks, mode, pathname):
                     style_table={'overflowX': 'auto'},
                     export_format="csv",
                     export_headers="display",
-                    tooltip_data=[
-                        {
-                            column: {'value': str(row.get(f"{column} Full", row.get(column, ""))), 'type': 'markdown'}
-                            for column in row.keys()
-                        } for row in table_data
-                    ],
-                    tooltip_duration=None
+                    tooltip_data=address_tooltips,
+                    tooltip_duration=None,
+                    css=[{
+                        'selector': '.dash-table-tooltip',
+                        'rule': 'background-color: #2c3e50; color: white; border: none; font-family: monospace; padding: 8px; max-width: 500px; word-wrap: break-word;'
+                    }]
                 )
             ])
         else:

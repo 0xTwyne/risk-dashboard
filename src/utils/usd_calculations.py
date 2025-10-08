@@ -165,21 +165,16 @@ def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any], symbol
     twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
     twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
     
-    # Get symbols or fallback to shortened addresses
-    credit_vault_symbol = symbol_mapping.get(credit_vault_address.lower(), 
-                                              credit_vault_address[:10] + "..." if len(credit_vault_address) > 10 else credit_vault_address)
-    debt_vault_symbol = symbol_mapping.get(debt_vault_address.lower(), 
-                                            debt_vault_address[:10] + "..." if len(debt_vault_address) > 10 else debt_vault_address)
+    # Get symbols or use full addresses (for copying)
+    credit_vault_display = symbol_mapping.get(credit_vault_address.lower(), credit_vault_address)
+    debt_vault_display = symbol_mapping.get(debt_vault_address.lower(), debt_vault_address)
     
     # Create table row with calculated USD values
     row = {
         "Chain ID": snapshot.chainId,
-        "Vault Address": vault_address[:10] + "..." if len(vault_address) > 10 else vault_address,
-        "Full Vault Address": vault_address,  # Store full address for navigation
-        "Credit Vault": credit_vault_symbol,
-        "Credit Vault Full": credit_vault_address,
-        "Debt Vault": debt_vault_symbol,
-        "Debt Vault Full": debt_vault_address,
+        "Vault Address": vault_address,  # Store full address for copying
+        "Credit Vault": credit_vault_display,
+        "Debt Vault": debt_vault_display,
         "Max Release (USD)": usd_values.get('max_release_usd', 0.0),
         "Max Repay (USD)": usd_values.get('max_repay_usd', 0.0),
         "Total Assets (USD)": usd_values.get('total_assets_usd', 0.0),
