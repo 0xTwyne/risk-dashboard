@@ -53,17 +53,22 @@ def calculate_health_factor(enhanced_snapshot: Dict[str, Any]) -> float:
 
 
 def calculate_health_factors_for_snapshots(
-    enhanced_snapshots: List[Dict[str, Any]]
-) -> List[Tuple[float, float, float, str]]:
+    enhanced_snapshots: List[Dict[str, Any]],
+    symbol_mapping: Dict[str, str] = None
+) -> List[Tuple[float, float, float, str, str]]:
     """
     Calculate health factors for multiple snapshots and prepare data for charting.
     
     Args:
         enhanced_snapshots: List of enhanced snapshot dictionaries
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
-        List of tuples (health_factor, debt_usd, credit_usd, vault_address) for chart data
+        List of tuples (health_factor, debt_usd, credit_usd, vault_address, vault_symbol) for chart data
     """
+    if symbol_mapping is None:
+        symbol_mapping = {}
+    
     chart_data = []
     
     for enhanced_snapshot in enhanced_snapshots:
@@ -73,10 +78,21 @@ def calculate_health_factors_for_snapshots(
             credit_usd = enhanced_snapshot['calculated_usd_values'].get('user_collateral_usd', 0.0)
             vault_address = enhanced_snapshot.get('vault_address', 'unknown')
             
+            # Get credit and debt vault addresses
+            credit_vault = enhanced_snapshot.get('credit_vault', '')
+            debt_vault = enhanced_snapshot.get('debt_vault', '')
+            
+            # Get symbols for credit and debt vaults
+            credit_symbol = symbol_mapping.get(credit_vault.lower(), credit_vault[:10] + "..." if len(credit_vault) > 10 else credit_vault)
+            debt_symbol = symbol_mapping.get(debt_vault.lower(), debt_vault[:10] + "..." if len(debt_vault) > 10 else debt_vault)
+            
+            # Create a display label combining both symbols
+            vault_symbol = f"{credit_symbol} / {debt_symbol}"
+            
             # Only include points with positive debt for meaningful chart
             # (points with 0 debt will all have health factor = 10)
             if debt_usd > 0:
-                chart_data.append((health_factor, debt_usd, credit_usd, vault_address))
+                chart_data.append((health_factor, debt_usd, credit_usd, vault_address, vault_symbol))
                 
         except Exception as e:
             vault_address = enhanced_snapshot.get('vault_address', 'unknown')
@@ -187,7 +203,8 @@ def calculate_ltv_position_data_for_heatmap(
 
 
 def prepare_sankey_data_for_credit_flow(
-    enhanced_snapshots: List[Dict[str, Any]]
+    enhanced_snapshots: List[Dict[str, Any]],
+    symbol_mapping: Dict[str, str] = None
 ) -> Dict[str, Any]:
     """
     Prepare Sankey diagram data showing 2-tier credit flow:
@@ -195,11 +212,15 @@ def prepare_sankey_data_for_credit_flow(
     
     Args:
         enhanced_snapshots: List of enhanced snapshot dictionaries
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
         Dictionary with 'labels', 'source', 'target', 'value', and 'colors' for Sankey diagram
     """
     from collections import defaultdict
+    
+    if symbol_mapping is None:
+        symbol_mapping = {}
     
     # Collect flows: Credit Vault -> Debt Vault (using max_release_usd)
     credit_to_debt = defaultdict(float)
@@ -233,11 +254,21 @@ def prepare_sankey_data_for_credit_flow(
     credit_vaults = sorted(list(set(key[0] for key in credit_to_debt.keys())))
     debt_vaults = sorted(list(set(key[1] for key in credit_to_debt.keys())))
     
-    # Create node labels (credit vaults first, then debt vaults)
-    labels = credit_vaults + debt_vaults
+    # Create mapping from vault address to node index (using original addresses)
+    all_vault_addresses = credit_vaults + debt_vaults
+    vault_to_index = {vault: i for i, vault in enumerate(all_vault_addresses)}
     
-    # Create mapping from vault address to node index
-    vault_to_index = {vault: i for i, vault in enumerate(labels)}
+    # Create node labels using symbols for display (credit vaults first, then debt vaults)
+    # Convert addresses to symbols for display
+    credit_vault_labels = [
+        symbol_mapping.get(addr.lower(), addr[:10] + "..." if len(addr) > 10 else addr)
+        for addr in credit_vaults
+    ]
+    debt_vault_labels = [
+        symbol_mapping.get(addr.lower(), addr[:10] + "..." if len(addr) > 10 else addr)
+        for addr in debt_vaults
+    ]
+    labels = credit_vault_labels + debt_vault_labels
     
     # Prepare source, target, and value arrays for links
     source_indices = []

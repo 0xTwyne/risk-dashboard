@@ -370,6 +370,35 @@ async def fetch_evaults_data() -> Dict[str, Any]:
         }
 
 
+async def get_vault_symbol_mapping() -> Dict[str, str]:
+    """
+    Fetch EVault data and create a mapping of vault addresses to symbols.
+    
+    Returns:
+        Dict mapping vault address (lowercase) to symbol
+    """
+    try:
+        evaults_data = await fetch_evaults_data()
+        
+        if evaults_data.get("error"):
+            logger.warning(f"Failed to fetch evaults for symbol mapping: {evaults_data['error']}")
+            return {}
+        
+        # Create mapping of address -> symbol (case-insensitive)
+        symbol_mapping = {}
+        for metric in evaults_data.get("metrics", []):
+            vault_address = metric.vaultAddress.lower()
+            symbol = metric.symbol
+            symbol_mapping[vault_address] = symbol
+        
+        logger.info(f"Created symbol mapping for {len(symbol_mapping)} vaults")
+        return symbol_mapping
+        
+    except Exception as e:
+        logger.error(f"Failed to create vault symbol mapping: {e}", exc_info=True)
+        return {}
+
+
 async def fetch_evaults_data_with_history(vault_type: str) -> Dict[str, Any]:
     """
     Fetch EVaults data and historical data in a single async function.
@@ -703,6 +732,10 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     if pathname != "/collateralVaults":
         return [], "", "", "", "", "", ""
     
+    # Fetch vault symbol mapping
+    symbol_mapping = run_async(get_vault_symbol_mapping())
+    logger.info(f"Fetched symbol mapping with {len(symbol_mapping)} vaults")
+    
     if selected_block is not None:
         logger.info(f"Updating collateral vaults metrics for block {selected_block:,}...")
         data = run_async(fetch_collateral_vault_data_at_block(selected_block))
@@ -809,7 +842,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         enhanced_snapshots = data.get("enhanced_snapshots", [])
         if enhanced_snapshots:
             # Prepare Sankey data
-            sankey_data = prepare_sankey_data_for_credit_flow(enhanced_snapshots)
+            sankey_data = prepare_sankey_data_for_credit_flow(enhanced_snapshots, symbol_mapping)
             sankey_chart = html.Div([
                 html.H5("Credit Flow Analysis", className="mb-3"),
                 create_credit_flow_sankey(sankey_data, "Credit Vaults → Debt Vaults")
@@ -823,7 +856,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         # Create health factor chart
         if enhanced_snapshots:
             # Calculate health factors for chart
-            chart_data = calculate_health_factors_for_snapshots(enhanced_snapshots)
+            chart_data = calculate_health_factors_for_snapshots(enhanced_snapshots, symbol_mapping)
             health_chart = html.Div([
                 html.H5("Health Factor Analysis", className="mb-3"),
                 create_health_factor_scatter_plot(chart_data, "Debt USD vs Health Factor")
@@ -850,7 +883,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
         
         # Create table component
         if data.get("enhanced_snapshots"):
-            table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"])
+            table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"], symbol_mapping)
             table_component = html.Div([
                 html.H5("Collateral Vaults Snapshots", className="mb-3"),
                 dash_table.DataTable(
@@ -1293,16 +1326,20 @@ async def fetch_external_liquidations(limit: int = 50, offset: int = 0) -> Dict[
         }
 
 
-def format_internal_liquidations_for_table(liquidations: List) -> List[Dict[str, Any]]:
+def format_internal_liquidations_for_table(liquidations: List, symbol_mapping: Dict[str, str] = None) -> List[Dict[str, Any]]:
     """
     Format internal liquidations data for DataTable display.
     
     Args:
         liquidations: List of InternalLiquidation objects
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
         List of dictionaries formatted for display
     """
+    if symbol_mapping is None:
+        symbol_mapping = {}
+    
     table_data = []
     
     for liq in liquidations:
@@ -1322,13 +1359,20 @@ def format_internal_liquidations_for_table(liquidations: List) -> List[Dict[str,
         # Format LTV (divide by 1e18 and convert to percentage)
         ltv_value = float(liq.twyne_liq_ltv) / 1e18 * 100
         
+        # Get symbols or fallback to shortened addresses
+        collateral_vault_symbol = symbol_mapping.get(liq.collateral_vault.lower(), f"{liq.collateral_vault[:6]}...{liq.collateral_vault[-4:]}")
+        credit_vault_symbol = symbol_mapping.get(liq.credit_vault.lower(), f"{liq.credit_vault[:6]}...{liq.credit_vault[-4:]}")
+        debt_vault_symbol = symbol_mapping.get(liq.debt_vault.lower(), f"{liq.debt_vault[:6]}...{liq.debt_vault[-4:]}")
+        
         row = {
             "Block": int(liq.block_number),
             "Timestamp": formatted_time,
-            "Collateral Vault": f"{liq.collateral_vault[:6]}...{liq.collateral_vault[-4:]}",
+            "Collateral Vault": collateral_vault_symbol,
             "Collateral Vault Full": liq.collateral_vault,
-            "Credit Vault": f"{liq.credit_vault[:6]}...{liq.credit_vault[-4:]}",
-            "Debt Vault": f"{liq.debt_vault[:6]}...{liq.debt_vault[-4:]}",
+            "Credit Vault": credit_vault_symbol,
+            "Credit Vault Full": liq.credit_vault,
+            "Debt Vault": debt_vault_symbol,
+            "Debt Vault Full": liq.debt_vault,
             "Liquidator": f"{liq.liquidator_address[:6]}...{liq.liquidator_address[-4:]}",
             "Credit Reserved (USD)": f"${credit_reserved_usd:,.2f}",
             "Debt (USD)": f"${debt_usd:,.2f}",
@@ -1343,16 +1387,20 @@ def format_internal_liquidations_for_table(liquidations: List) -> List[Dict[str,
     return table_data
 
 
-def format_external_liquidations_for_table(liquidations: List) -> List[Dict[str, Any]]:
+def format_external_liquidations_for_table(liquidations: List, symbol_mapping: Dict[str, str] = None) -> List[Dict[str, Any]]:
     """
     Format external liquidations data for DataTable display.
     
     Args:
         liquidations: List of ExternalLiquidation objects
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
         List of dictionaries formatted for display
     """
+    if symbol_mapping is None:
+        symbol_mapping = {}
+    
     table_data = []
     
     for liq in liquidations:
@@ -1377,13 +1425,20 @@ def format_external_liquidations_for_table(liquidations: List) -> List[Dict[str,
 
         ltv = (pre_debt_usd / pre_collateral_usd) * 100
         
+        # Get symbols or fallback to shortened addresses
+        collateral_symbol = symbol_mapping.get(liq.collateral.lower(), f"{liq.collateral[:6]}...{liq.collateral[-4:]}")
+        debt_vault_symbol = symbol_mapping.get(liq.vaultAddress.lower(), f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}")
+        credit_vault_symbol = symbol_mapping.get(liq.creditVault.lower(), f"{liq.creditVault[:6]}...{liq.creditVault[-4:]}")
+        
         row = {
             "Block": int(liq.blockNumber),
             "Timestamp": formatted_time,
-            "Debt Vault Address": f"{liq.vaultAddress[:6]}...{liq.vaultAddress[-4:]}",
+            "Underlying Collateral Vault": collateral_symbol,
+            "Underlying Collateral Vault Address Full": liq.collateral,
+            "Debt Vault": debt_vault_symbol,
             "Debt Vault Address Full": liq.vaultAddress,
-            "Collateral Vault Address": f"{liq.collateral[:6]}...{liq.collateral[-4:]}",
-            "Collateral Vault Address Full": liq.collateral,
+            "Credit Vault": credit_vault_symbol,
+            "Credit Vault Address Full": liq.creditVault,
             "Liquidator": f"{liq.liquidator[:6]}...{liq.liquidator[-4:]}",
             "Violator": f"{liq.violator[:6]}...{liq.violator[-4:]}",
             "Repay Assets (USD)": f"${repay_assets_usd:,.2f}",
@@ -1434,8 +1489,9 @@ def get_external_liquidations_table_columns() -> List[Dict[str, str]]:
     """
     return [
         {"name": "Timestamp", "id": "Timestamp"},
-        {"name": "Debt Vault Address", "id": "Debt Vault Address"},
-        {"name": "Collateral Vault Address", "id": "Collateral Vault Address"},
+        {"name": "Underlying Collateral Vault", "id": "Underlying Collateral Vault"},
+        {"name": "Credit Vault", "id": "Credit Vault"},
+        {"name": "Debt Vault", "id": "Debt Vault"},
         {"name": "Pre-Liq Collateral (USD)", "id": "Pre-Liq Collateral (USD)"},
         {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
         {"name": "Pre-Liq Debt (USD)", "id": "Pre-Liq Debt (USD)"},
@@ -1576,6 +1632,10 @@ def update_liquidations_data(n_clicks, mode, pathname):
     
     logger.info(f"Updating liquidations data for {mode} mode...")
     
+    # Fetch vault symbol mapping
+    symbol_mapping = run_async(get_vault_symbol_mapping())
+    logger.info(f"Fetched symbol mapping with {len(symbol_mapping)} vaults")
+    
     # Fetch data based on mode
     if mode == "internal":
         data = run_async(fetch_internal_liquidations(limit=100))
@@ -1607,10 +1667,10 @@ def update_liquidations_data(n_clicks, mode, pathname):
         
         if liquidations:
             if mode == "internal":
-                table_data = format_internal_liquidations_for_table(liquidations)
+                table_data = format_internal_liquidations_for_table(liquidations, symbol_mapping)
                 columns = get_internal_liquidations_table_columns()
             else:
-                table_data = format_external_liquidations_for_table(liquidations)
+                table_data = format_external_liquidations_for_table(liquidations, symbol_mapping)
                 columns = get_external_liquidations_table_columns()
             
             table_component = html.Div([

@@ -133,21 +133,27 @@ def get_summary_metrics_from_snapshots(
     }
 
 
-def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any]) -> Dict[str, Any]:
+def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any], symbol_mapping: Dict[str, str] = None) -> Dict[str, Any]:
     """
     Format an enhanced snapshot for table display.
     
     Args:
         enhanced_snapshot: Enhanced snapshot dictionary with calculated USD values
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
         Dictionary formatted for DataTable display
     """
+    if symbol_mapping is None:
+        symbol_mapping = {}
+    
     snapshot = enhanced_snapshot['original_snapshot']
     usd_values = enhanced_snapshot['calculated_usd_values']
     
     # Get basic snapshot data
     vault_address = enhanced_snapshot['vault_address']
+    credit_vault_address = snapshot.creditVault
+    debt_vault_address = snapshot.debtVault
     
     # Format timestamp
     from datetime import datetime
@@ -159,13 +165,21 @@ def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any]) -> Dic
     twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
     twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
     
+    # Get symbols or fallback to shortened addresses
+    credit_vault_symbol = symbol_mapping.get(credit_vault_address.lower(), 
+                                              credit_vault_address[:10] + "..." if len(credit_vault_address) > 10 else credit_vault_address)
+    debt_vault_symbol = symbol_mapping.get(debt_vault_address.lower(), 
+                                            debt_vault_address[:10] + "..." if len(debt_vault_address) > 10 else debt_vault_address)
+    
     # Create table row with calculated USD values
     row = {
         "Chain ID": snapshot.chainId,
         "Vault Address": vault_address[:10] + "..." if len(vault_address) > 10 else vault_address,
         "Full Vault Address": vault_address,  # Store full address for navigation
-        "Credit Vault": snapshot.creditVault[:10] + "..." if len(snapshot.creditVault) > 10 else snapshot.creditVault,
-        "Debt Vault": snapshot.debtVault[:10] + "..." if len(snapshot.debtVault) > 10 else snapshot.debtVault,
+        "Credit Vault": credit_vault_symbol,
+        "Credit Vault Full": credit_vault_address,
+        "Debt Vault": debt_vault_symbol,
+        "Debt Vault Full": debt_vault_address,
         "Max Release (USD)": usd_values.get('max_release_usd', 0.0),
         "Max Repay (USD)": usd_values.get('max_repay_usd', 0.0),
         "Total Assets (USD)": usd_values.get('total_assets_usd', 0.0),
@@ -183,19 +197,21 @@ def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any]) -> Dic
 
 
 def format_enhanced_snapshots_for_table(
-    enhanced_snapshots: List[Dict[str, Any]]
+    enhanced_snapshots: List[Dict[str, Any]],
+    symbol_mapping: Dict[str, str] = None
 ) -> List[Dict[str, Any]]:
     """
     Format multiple enhanced snapshots for table display.
     
     Args:
         enhanced_snapshots: List of enhanced snapshot dictionaries
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
         
     Returns:
         List of dictionaries formatted for DataTable
     """
     return [
-        format_enhanced_snapshot_for_table(enhanced_snapshot) 
+        format_enhanced_snapshot_for_table(enhanced_snapshot, symbol_mapping) 
         for enhanced_snapshot in enhanced_snapshots
     ]
 

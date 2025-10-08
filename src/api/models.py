@@ -81,6 +81,9 @@ class ExternalLiquidation(BaseModel):
     txnHash: str
     liquidator: str
     violator: str
+    creditVault: str
+    debtVault: str
+    underlyingCollateralVault: str
     collateral: str
     repayAssets: str
     yieldBalance: str
@@ -108,6 +111,7 @@ class InternalLiquidation(BaseModel):
     collateral_vault: str
     credit_vault: str
     debt_vault: str
+    underlying_collateral_vault: str
     liquidator_address: str
     block_number: str
     block_timestamp: str

@@ -162,7 +162,7 @@ def create_pie_chart(
 
 
 def create_health_factor_scatter_plot(
-    chart_data: List[Tuple[float, float, float, str]],
+    chart_data: List[Tuple[float, float, float, str, str]],
     title: str = "Debt USD vs Health Factor"
 ) -> dcc.Graph:
     """
@@ -170,7 +170,7 @@ def create_health_factor_scatter_plot(
     Marker size varies based on credit USD value.
     
     Args:
-        chart_data: List of tuples (health_factor, debt_usd, credit_usd, vault_address)
+        chart_data: List of tuples (health_factor, debt_usd, credit_usd, vault_address, vault_symbol)
         title: Chart title
         
     Returns:
@@ -199,6 +199,7 @@ def create_health_factor_scatter_plot(
     debt_usd_values = [point[1] for point in chart_data]
     credit_usd_values = [point[2] for point in chart_data]
     vault_addresses = [point[3] for point in chart_data]
+    vault_symbols = [point[4] if len(point) > 4 else point[3][:10] + "..." for point in chart_data]
     
     # Calculate marker sizes based on credit USD values
     # Normalize credit values to reasonable marker sizes (6-30 pixels)
@@ -215,13 +216,13 @@ def create_health_factor_scatter_plot(
         # All values are the same, use default size
         marker_sizes = [12] * len(credit_usd_values)
     
-    # Create hover text with vault addresses (shortened)
+    # Create hover text with vault symbols
     hover_text = [
-        f"Vault: {addr[:10]}...<br>"
+        f"Vaults: {symbol}<br>"
         f"Health Factor: {hf:.2f}<br>"
         f"Debt USD: ${debt:,.2f}<br>"
         f"Credit USD: ${credit:,.2f}"
-        for hf, debt, credit, addr in chart_data
+        for hf, debt, credit, addr, symbol in zip(health_factors, debt_usd_values, credit_usd_values, vault_addresses, vault_symbols)
     ]
     
     # Create the scatter plot
