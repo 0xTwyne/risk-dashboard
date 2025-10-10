@@ -93,7 +93,12 @@ class ExternalLiquidation(BaseModel):
     debtAmount: str
     collateralAmountUsd: str
     debtAmountUsd: str
-    liqLtv: str
+    eulerLiqLtv: str
+    twyneLiqLtv: str
+    twyneMaxLiqLtv: str
+    twyneSafetyBuffer: str
+    creditReserved: str
+    creditReservedUsd: str
     preCollateralAmount: str
     preCollateralAmountUsd: str
     preDebtAmount: str

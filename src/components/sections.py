@@ -1486,20 +1486,40 @@ def format_external_liquidations_for_table(liquidations: List, symbol_mapping: D
         post_collateral_usd = float(liq.collateralAmountUsd) / 1e18
         pre_debt_usd = float(liq.preDebtAmountUsd) / 1e18
         post_debt_usd = float(liq.debtAmountUsd) / 1e18
+        pre_credit_reserved_usd = float(liq.creditReservedUsd) / 1e18
         
-        # Calculate changes
-        collateral_change = post_collateral_usd - pre_collateral_usd
-        debt_change = post_debt_usd - pre_debt_usd
-        
-        # Format LTV (divide by 1e18 and convert to percentage)
-        liq_ltv_value = float(liq.liqLtv) / 1e18 * 100
+        euler_liq_ltv = float(liq.eulerLiqLtv) / 1e4 
+        twyne_liq_ltv = float(liq.twyneLiqLtv) / 1e4 
+        twyne_max_liq_ltv = float(liq.twyneMaxLiqLtv) / 1e4 
+        twyne_safety_buffer = float(liq.twyneSafetyBuffer) / 1e4 
 
-        ltv = (pre_debt_usd / pre_collateral_usd) * 100
+        euler_pre_ltv = (pre_debt_usd / pre_collateral_usd) 
+        twyne_pre_ltv = (pre_debt_usd / (pre_collateral_usd - pre_credit_reserved_usd))
         
         # Get symbols or use full addresses (for copying)
         collateral_display = symbol_mapping.get(liq.collateral.lower(), liq.collateral)
         debt_vault_display = symbol_mapping.get(liq.vaultAddress.lower(), liq.vaultAddress)
         credit_vault_display = symbol_mapping.get(liq.creditVault.lower(), liq.creditVault)
+
+        closing_factor = 1 - (post_debt_usd / pre_debt_usd)
+        liquidation_incentive = ((pre_collateral_usd - post_collateral_usd) / (pre_debt_usd - post_debt_usd)) - 1
+        external_ltv_exceedance = (euler_pre_ltv / euler_liq_ltv)
+        internal_ltv_exceedance = (twyne_pre_ltv / twyne_liq_ltv)
+
+        rho = twyne_pre_ltv / twyne_max_liq_ltv
+        pre_factor = (twyne_safety_buffer * euler_liq_ltv) / (twyne_pre_ltv - twyne_safety_buffer * euler_liq_ltv)
+
+        clp_loss = min(0, 
+            (
+                pre_factor
+            ) * (
+                1 - (rho/twyne_safety_buffer) * (
+                    (1 + liquidation_incentive) * closing_factor * twyne_max_liq_ltv + (1 - closing_factor)
+                )
+                )
+        )
+
+        clp_loss_usd = clp_loss * pre_credit_reserved_usd
         
         row = {
             "Block": int(liq.blockNumber),
@@ -1515,8 +1535,19 @@ def format_external_liquidations_for_table(liquidations: List, symbol_mapping: D
             "Post-Liq Collateral (USD)": f"${post_collateral_usd:,.2f}",
             "Pre-Liq Debt (USD)": f"${pre_debt_usd:,.2f}",
             "Post-Liq Debt (USD)": f"${post_debt_usd:,.2f}",
-            "LTV (%)": f"{ltv:.2f}",
-            "LLTV (%)": f"{liq_ltv_value:.2f}",
+            "Pre-Liq Credit Reserved (USD)": f"${pre_credit_reserved_usd:,.2f}",
+            "Pre-Liq Twyne LTV (%)": f"{twyne_pre_ltv:.2f}",
+            "Pre-Liq Euler LTV (%)": f"{euler_pre_ltv:.2f}",
+            "External LLTV (%)": f"{euler_liq_ltv:.2f}",
+            "Twyne LLTV (%)": f"{twyne_liq_ltv:.2f}",
+            "External LTV Exceedance (%)": f"{external_ltv_exceedance:.2f}",
+            "Twyne LTV Exceedance (%)": f"{internal_ltv_exceedance:.2f}",
+            "Closing Factor (%)": f"{closing_factor:.2f}",
+            "Liquidation Incentive (%)": f"{liquidation_incentive:.2f}",
+            "CLP Loss (%)": f"{clp_loss:.2f}",
+            "CLP Loss (USD)": f"${clp_loss_usd:,.2f}",
+            "Rho": f"{rho:.2f}",
+            "Pre-Factor": f"{pre_factor:.2f}",
             "Txn Hash": liq.txnHash
         }
         table_data.append(row)
@@ -1564,8 +1595,19 @@ def get_external_liquidations_table_columns() -> List[Dict[str, str]]:
         {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
         {"name": "Pre-Liq Debt (USD)", "id": "Pre-Liq Debt (USD)"},
         {"name": "Post-Liq Debt (USD)", "id": "Post-Liq Debt (USD)"},
-        {"name": "LTV (%)", "id": "LTV (%)"},
-        {"name": "LLTV (%)", "id": "LLTV (%)"},
+        {"name": "Pre-Liq Credit Reserved (USD)", "id": "Pre-Liq Credit Reserved (USD)"},
+        {"name": "Pre-Liq Twyne LTV (%)", "id": "Pre-Liq Twyne LTV (%)"},
+        {"name": "Pre-Liq Euler LTV (%)", "id": "Pre-Liq Euler LTV (%)"},
+        {"name": "External LLTV (%)", "id": "External LLTV (%)"},
+        {"name": "Twyne LLTV (%)", "id": "Twyne LLTV (%)"},
+        {"name": "External LTV Exceedance (%)", "id": "External LTV Exceedance (%)"},
+        {"name": "Twyne LTV Exceedance (%)", "id": "Twyne LTV Exceedance (%)"},
+        {"name": "CLP Loss (%)", "id": "CLP Loss (%)"},
+        {"name": "CLP Loss (USD)", "id": "CLP Loss (USD)"},
+        {"name": "Closing Factor (%)", "id": "Closing Factor (%)"},
+        {"name": "Liquidation Incentive (%)", "id": "Liquidation Incentive (%)"},
+        {"name": "Rho", "id": "Rho"},
+        {"name": "Pre-Factor", "id": "Pre-Factor"},
         {"name": "Repay Assets (USD)", "id": "Repay Assets (USD)"},
         {"name": "Yield Balance (USD)", "id": "Yield Balance (USD)"},
         {"name": "Liquidator", "id": "Liquidator"},
