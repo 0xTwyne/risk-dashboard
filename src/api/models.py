@@ -20,6 +20,7 @@ class CollateralVaultSnapshot(BaseModel):
     """Model for collateral vault position snapshot."""
     chainId: str
     vaultAddress: str
+    underlyingCollateralVault: str
     creditVault: str
     debtVault: str
     maxRelease: str
@@ -36,6 +37,8 @@ class CollateralVaultSnapshot(BaseModel):
     blockNumber: str
     blockTimestamp: str
     logIndex: str
+    state: str
+    txType: str
 
 
 class CollateralVaultsSnapshotsResponse(BaseAPIResponse):
