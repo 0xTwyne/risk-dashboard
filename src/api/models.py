@@ -112,30 +112,25 @@ class ExternalLiquidationsResponse(BaseAPIResponse):
 
 class InternalLiquidation(BaseModel):
     """Model for internal liquidation event."""
-    factory_address: str
-    collateral_vault: str
-    credit_vault: str
-    debt_vault: str
-    underlying_collateral_vault: str
-    liquidator_address: str
-    block_number: str
-    block_timestamp: str
-    txn_hash: str
-    credit_reserved: str
+    chainId: str
+    factoryAddress: str
+    collateralVault: str
+    creditVault: str
+    debtVault: str
+    underlyingCollateralVault: str
+    liquidatorAddress: str
+    blockNumber: str
+    blockTimestamp: str
+    txnHash: str
+    creditReserved: str
     debt: str
-    twyne_liq_ltv: str
-    credit_reserved_usd: str
-    debt_usd: str
-    pre_max_release: str
-    pre_max_release_usd: str
-    pre_max_repay: str
-    pre_max_repay_usd: str
-    pre_user_owned_collateral: str
-    pre_user_owned_collateral_usd: str
-    pre_total_collateral: str
-    pre_total_collateral_usd: str
-    total_collateral: str
-    total_assets_deposited_or_reserved_usd: str
+    totalCollateral: str
+    userOwnedCollateral: str
+    twyneLiqLtv: str
+    creditReservedUsd: str
+    debtUsd: str
+    totalCollateralUsd: str
+    userOwnedCollateralUsd: str
 
 
 class InternalLiquidationsResponse(BaseAPIResponse):

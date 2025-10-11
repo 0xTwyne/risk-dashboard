@@ -1418,40 +1418,49 @@ def format_internal_liquidations_for_table(liquidations: List, symbol_mapping: D
     
     for liq in liquidations:
         # Convert timestamps and block numbers
-        block_timestamp = int(liq.block_timestamp)
+        block_timestamp = int(liq.blockTimestamp)
         formatted_time = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S")
         
         # Format USD values (divide by 1e18)
-        credit_reserved_usd = float(liq.credit_reserved_usd) / 1e18
-        debt_usd = float(liq.debt_usd) / 1e18
-        pre_total_collateral_usd = float(liq.pre_total_collateral_usd) / 1e18
-        total_collateral_usd = float(liq.total_assets_deposited_or_reserved_usd) / 1e18
+        credit_reserved_usd = float(liq.creditReservedUsd) / 1e18
+        debt_usd = float(liq.debtUsd) / 1e18
+        total_collateral_usd = float(liq.totalCollateralUsd) / 1e18
+        user_owned_collateral_usd = float(liq.userOwnedCollateralUsd) / 1e18
         
-        # Calculate collateral change
-        collateral_change = total_collateral_usd - pre_total_collateral_usd
+        # Format non-USD values (divide by appropriate decimals)
+        credit_reserved = float(liq.creditReserved) / 1e18
+        debt = float(liq.debt) / 1e18
+        total_collateral = float(liq.totalCollateral) / 1e18
+        user_owned_collateral = float(liq.userOwnedCollateral) / 1e18
         
         # Format LTV (divide by 1e18 and convert to percentage)
-        ltv_value = float(liq.twyne_liq_ltv) / 1e18 * 100
+        ltv_value = float(liq.twyneLiqLtv) / 1e18 * 100
         
         # Get symbols or use full addresses (for copying)
-        collateral_vault_display = symbol_mapping.get(liq.collateral_vault.lower(), liq.collateral_vault)
-        credit_vault_display = symbol_mapping.get(liq.credit_vault.lower(), liq.credit_vault)
-        debt_vault_display = symbol_mapping.get(liq.debt_vault.lower(), liq.debt_vault)
+        collateral_vault_display = symbol_mapping.get(liq.collateralVault.lower(), liq.collateralVault)
+        credit_vault_display = symbol_mapping.get(liq.creditVault.lower(), liq.creditVault)
+        debt_vault_display = symbol_mapping.get(liq.debtVault.lower(), liq.debtVault)
+        underlying_collateral_display = symbol_mapping.get(liq.underlyingCollateralVault.lower(), liq.underlyingCollateralVault)
         
         row = {
-            "Block": int(liq.block_number),
+            "Chain ID": liq.chainId,
+            "Block": int(liq.blockNumber),
             "Timestamp": formatted_time,
             "Collateral Vault": collateral_vault_display,
             "Credit Vault": credit_vault_display,
             "Debt Vault": debt_vault_display,
-            "Liquidator": liq.liquidator_address,
+            "Underlying Collateral Vault": underlying_collateral_display,
+            "Liquidator": liq.liquidatorAddress,
+            "Credit Reserved": f"{credit_reserved:,.4f}",
             "Credit Reserved (USD)": f"${credit_reserved_usd:,.2f}",
+            "Debt": f"{debt:,.4f}",
             "Debt (USD)": f"${debt_usd:,.2f}",
-            "Pre-Liq Collateral (USD)": f"${pre_total_collateral_usd:,.2f}",
-            "Post-Liq Collateral (USD)": f"${total_collateral_usd:,.2f}",
-            "Collateral Change (USD)": f"${collateral_change:,.2f}",
-            "LTV (%)": f"{ltv_value:.2f}",
-            "Txn Hash": liq.txn_hash
+            "Total Collateral": f"{total_collateral:,.4f}",
+            "Total Collateral (USD)": f"${total_collateral_usd:,.2f}",
+            "User Owned Collateral": f"{user_owned_collateral:,.4f}",
+            "User Owned Collateral (USD)": f"${user_owned_collateral_usd:,.2f}",
+            "Twyne Liq LTV (%)": f"{ltv_value:.2f}",
+            "Txn Hash": liq.txnHash
         }
         table_data.append(row)
     
@@ -1561,18 +1570,23 @@ def get_internal_liquidations_table_columns() -> List[Dict[str, str]]:
         List of column definitions
     """
     return [
-        {"name": "Block", "id": "Block"},
+        {"name": "Chain ID", "id": "Chain ID"},
         {"name": "Timestamp", "id": "Timestamp"},
         {"name": "Collateral Vault", "id": "Collateral Vault"},
+        {"name": "Underlying Collateral Vault", "id": "Underlying Collateral Vault"},
         {"name": "Credit Vault", "id": "Credit Vault"},
         {"name": "Debt Vault", "id": "Debt Vault"},
+        {"name": "Total Collateral", "id": "Total Collateral", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Total Collateral (USD)", "id": "Total Collateral (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "User Owned Collateral", "id": "User Owned Collateral", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "User Owned Collateral (USD)", "id": "User Owned Collateral (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Credit Reserved", "id": "Credit Reserved", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Credit Reserved (USD)", "id": "Credit Reserved (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Debt", "id": "Debt", "type": "numeric", "format": {"specifier": ",.4f"}},
+        {"name": "Debt (USD)", "id": "Debt (USD)", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Twyne Liq LTV (%)", "id": "Twyne Liq LTV (%)", "type": "numeric", "format": {"specifier": ".2f"}},
         {"name": "Liquidator", "id": "Liquidator"},
-        {"name": "Credit Reserved (USD)", "id": "Credit Reserved (USD)"},
-        {"name": "Debt (USD)", "id": "Debt (USD)"},
-        {"name": "Pre-Liq Collateral (USD)", "id": "Pre-Liq Collateral (USD)"},
-        {"name": "Post-Liq Collateral (USD)", "id": "Post-Liq Collateral (USD)"},
-        {"name": "Collateral Change (USD)", "id": "Collateral Change (USD)"},
-        {"name": "LTV (%)", "id": "LTV (%)"},
+        {"name": "Block", "id": "Block", "type": "numeric"},
         {"name": "Txn Hash", "id": "Txn Hash"}
     ]
 
@@ -1777,8 +1791,8 @@ def update_liquidations_data(n_clicks, mode, pathname):
                 columns = get_internal_liquidations_table_columns()
                 # Define address columns for internal liquidations
                 address_columns = [
-                    "Collateral Vault", "Credit Vault", "Debt Vault", 
-                    "Liquidator", "Txn Hash"
+                    "Factory Address", "Collateral Vault", "Credit Vault", "Debt Vault", 
+                    "Underlying Collateral Vault", "Liquidator", "Txn Hash"
                 ]
             else:
                 table_data = format_external_liquidations_for_table(liquidations, symbol_mapping)
