@@ -67,7 +67,7 @@ def cache_evaults_data(data: Dict[str, Any]) -> None:
     
     try:
         cache_key = "evaults_latest_data"
-        cache.set(cache_key, data, timeout=300)  # 5 minutes
+        cache.set(cache_key, data, timeout=60*60*1000)  # 1 hour
         logger.info("EVaults data cached successfully")
     except Exception as e:
         logger.error(f"Failed to cache EVaults data: {e}", exc_info=True)
@@ -109,7 +109,7 @@ def cache_evaults_historical_data(vault_addresses: List[str], data: List[Dict[st
     
     try:
         cache_key = f"evaults_historical_data:{make_cache_key(vault_addresses)}"
-        cache.set(cache_key, data, timeout=300)  # 5 minutes
+        cache.set(cache_key, data, timeout=60*60*1000)  # 1 hour
         logger.info(f"EVaults historical data cached successfully for {len(vault_addresses)} vaults")
     except Exception as e:
         logger.error(f"Failed to cache EVaults historical data: {e}", exc_info=True)
@@ -192,7 +192,7 @@ def get_vault_symbol_mapping_cached() -> Dict[str, str]:
         return _get_vault_symbol_mapping_impl()
     
     # Use cache.memoize as a function decorator
-    cached_func = cache.memoize(timeout=300)(_get_vault_symbol_mapping_impl)
+    cached_func = cache.memoize(timeout=60*60*1000)(_get_vault_symbol_mapping_impl)
     return cached_func()
 
 
@@ -216,7 +216,7 @@ def cache_collateral_vault_data(data: Dict[str, Any]) -> None:
     
     try:
         cache_key = "collateral_vault_latest_data"
-        cache.set(cache_key, data, timeout=300)  # 5 minutes
+        cache.set(cache_key, data, timeout=60*60*1000)  # 1 hour
         logger.info("Collateral vault data cached successfully")
     except Exception as e:
         logger.error(f"Failed to cache collateral vault data: {e}", exc_info=True)
@@ -258,7 +258,7 @@ def cache_collateral_vault_block_data(block_number: int, data: Dict[str, Any]) -
     
     try:
         cache_key = f"collateral_vault_block_data:{block_number}"
-        cache.set(cache_key, data, timeout=300)  # 5 minutes
+        cache.set(cache_key, data, timeout=60*60*1000)  # 1 hour
         logger.info(f"Collateral vault block data for block {block_number} cached successfully")
     except Exception as e:
         logger.error(f"Failed to cache collateral vault block data: {e}", exc_info=True)
@@ -387,7 +387,7 @@ def get_cache_stats() -> Dict[str, Any]:
         stats = {
             "cache_type": "filesystem",
             "cache_dir": cache.config.get('CACHE_DIR', 'unknown'),
-            "default_timeout": cache.config.get('CACHE_DEFAULT_TIMEOUT', 300)
+            "default_timeout": cache.config.get('CACHE_DEFAULT_TIMEOUT', 60*60*1000)
         }
         
         return stats

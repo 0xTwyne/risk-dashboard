@@ -33,7 +33,8 @@ from .charts import (
     create_health_factor_scatter_plot,
     create_multi_vault_utilization_chart,
     create_ltv_position_heatmap,
-    create_credit_flow_sankey
+    create_credit_flow_sankey,
+    create_evault_asset_prices_chart
 )
 
 logger = logging.getLogger(__name__)
@@ -782,6 +783,9 @@ def EVaultsSection(section_id: str = "evaults-section") -> html.Div:
             # Utilization chart container
             html.Div(id=f"{section_id}-utilization-chart", className="mb-3"),
             
+            # Asset price chart container
+            html.Div(id=f"{section_id}-price-chart", className="mb-3"),
+            
             # Table container
             html.Div(id=f"{section_id}-table", className="mb-3"),
             
@@ -1159,6 +1163,7 @@ def filter_evaults_by_type(metrics: List, vault_type: str) -> List:
     [Output("evaults-section-metrics", "children"),
      Output("evaults-section-status", "children"),
      Output("evaults-section-utilization-chart", "children"),
+     Output("evaults-section-price-chart", "children"),
      Output("evaults-section-table", "children"),
      Output("evaults-section-last-updated", "children")],
     [Input("evaults-section-refresh", "n_clicks"),
@@ -1176,11 +1181,11 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
         pathname: Current URL path
         
     Returns:
-        Tuple of (metrics_cards, status_message, chart_component, table_component, last_updated_text)
+        Tuple of (metrics_cards, status_message, utilization_chart, price_chart, table_component, last_updated_text)
     """
     # Only update if we're on the EVaults page
     if pathname != "/evaults":
-        return [], "", "", "", ""
+        return [], "", "", "", "", ""
     
     # Clear cache when refresh button is clicked
     if n_clicks and n_clicks > 0:
@@ -1205,6 +1210,9 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
         metrics_cards = []
         chart_component = html.Div([
             html.P("Utilization chart unavailable due to API error", className="text-muted text-center p-4")
+        ])
+        price_chart_component = html.Div([
+            html.P("Asset price chart unavailable due to API error", className="text-muted text-center p-4")
         ])
         table_component = ErrorState(
             error_message="Unable to load table data due to API error",
@@ -1422,11 +1430,36 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
                 html.H5(f"{vault_type_display} Vault Utilization Over Time (Hourly Intervals)", className="mb-3"),
                 html.P(f"No {vault_type_display} vaults available for chart", className="text-muted text-center p-4")
             ])
+        
+        # Create asset price chart using historical data (same as utilization chart)
+        price_chart_component = html.Div()
+        if filtered_metrics and vault_historical_data:
+            try:
+                price_chart_component = html.Div([
+                    html.H5(f"{vault_type_display} Asset Prices Over Time (Hourly Intervals)", className="mb-3"),
+                    create_evault_asset_prices_chart(vault_historical_data, f"{vault_type_display} Asset Prices Over Time")
+                ])
+            except Exception as e:
+                logger.error(f"Error creating asset price chart: {e}", exc_info=True)
+                price_chart_component = html.Div([
+                    html.H5(f"{vault_type_display} Asset Prices Over Time (Hourly Intervals)", className="mb-3"),
+                    html.P("Error loading asset price chart", className="text-muted text-center p-4")
+                ])
+        elif filtered_metrics and not vault_historical_data:
+            price_chart_component = html.Div([
+                html.H5(f"{vault_type_display} Asset Prices Over Time", className="mb-3"),
+                html.P("No historical data available for asset price chart", className="text-muted text-center p-4")
+            ])
+        else:
+            price_chart_component = html.Div([
+                html.H5(f"{vault_type_display} Asset Prices Over Time (Hourly Intervals)", className="mb-3"),
+                html.P(f"No {vault_type_display} vaults available for price chart", className="text-muted text-center p-4")
+            ])
     
     # Last updated timestamp
     last_updated = f"Last updated: {datetime.now().strftime('%H:%M:%S')}"
     
-    return metrics_cards, status_message, chart_component, table_component, last_updated
+    return metrics_cards, status_message, chart_component, price_chart_component, table_component, last_updated
 
 
 # =======================

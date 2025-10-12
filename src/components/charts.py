@@ -10,6 +10,7 @@ from dash import html, dcc
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -515,7 +516,7 @@ def create_multi_vault_utilization_chart(
         return dcc.Graph(figure=fig)
     
     # Create color palette for different vaults
-    colors = px.colors.qualitative.Set3
+    colors = px.colors.qualitative.G10
     
     fig = go.Figure()
     
@@ -611,6 +612,201 @@ def create_multi_vault_utilization_chart(
     
     # Ensure y-axis starts at 0
     fig.update_yaxes(rangemode="tozero")
+    
+    return dcc.Graph(
+        figure=fig,
+        config={
+            'displayModeBar': True,
+            'displaylogo': False,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d']
+        }
+    )
+
+
+def create_evault_asset_prices_chart(
+    vault_historical_data: List[Dict[str, Any]],
+    title: str = "EVault Asset Prices Over Time"
+) -> dcc.Graph:
+    """
+    Create a time series chart showing asset prices over time for EVaults.
+    Uses pandas for efficient price calculations and hourly aggregation.
+    
+    Args:
+        vault_historical_data: List of dicts with keys:
+            - vault_address: str
+            - symbol: str  
+            - metrics: List of EVaultMetric objects
+        title: Chart title
+        
+    Returns:
+        Plotly graph component with time series price chart
+    """
+    if not vault_historical_data:
+        # Return empty chart with message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No historical vault data available for price chart",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            xanchor='center', yanchor='middle',
+            showarrow=False,
+            font=dict(size=16, color="gray")
+        )
+        fig.update_layout(
+            title=title,
+            template="plotly_white",
+            height=400
+        )
+        return dcc.Graph(figure=fig)
+    
+    # Create color palette for different vaults
+    colors = px.colors.qualitative.G10
+    
+    fig = go.Figure()
+    
+    # Process each vault's historical data
+    for i, vault_info in enumerate(vault_historical_data):
+        vault_address = vault_info.get('vault_address', 'Unknown')
+        symbol = vault_info.get('symbol', 'Unknown')
+        metrics = vault_info.get('metrics', [])
+        
+        if not metrics:
+            continue
+            
+        logger.info(f"Processing price data for vault {symbol}: {len(metrics)} raw metrics")
+        
+        try:
+            # Convert metrics to pandas DataFrame for efficient calculations
+            df_data = []
+            for metric in metrics:
+                df_data.append({
+                    'blockTimestamp': int(metric.blockTimestamp),
+                    'totalAssets': float(metric.totalAssets) if metric.totalAssets != "0" else 0.0,
+                    'totalAssetsUsd': float(metric.totalAssetsUsd) if metric.totalAssetsUsd != "0" else 0.0,
+                    'decimals': int(metric.decimals) if metric.decimals != "0" else 18
+                })
+            
+            if not df_data:
+                continue
+                
+            df = pd.DataFrame(df_data)
+            
+            # Convert timestamp to datetime
+            df['datetime'] = pd.to_datetime(df['blockTimestamp'], unit='s')
+            
+            # Scale totalAssets using decimals (vectorized operation)
+            df['scaling_factor'] = 10 ** df['decimals']
+            df['total_assets_scaled'] = df['totalAssets'] / df['scaling_factor']
+            
+            # Scale USD values if they are very large (vectorized operation)
+            df['total_assets_usd_scaled'] = np.where(
+                df['totalAssetsUsd'] > 1e12,
+                df['totalAssetsUsd'] / 1e18,
+                df['totalAssetsUsd']
+            )
+            
+            # Calculate price per token (vectorized operation)
+            df['price'] = np.where(
+                (df['total_assets_scaled'] > 0) & (df['total_assets_usd_scaled'] > 0),
+                df['total_assets_usd_scaled'] / df['total_assets_scaled'],
+                0.0
+            )
+            
+            # Filter out zero prices
+            df = df[df['price'] > 0]
+            
+            if df.empty:
+                logger.warning(f"No valid price data for vault {symbol}")
+                continue
+            
+            # Aggregate to hourly intervals (same as utilization chart)
+            df['hour'] = df['datetime'].dt.floor('H')
+            
+            # Take the latest price within each hour
+            hourly_df = df.sort_values('blockTimestamp').groupby('hour').last().reset_index()
+            
+            if hourly_df.empty:
+                continue
+            
+            # Log the date range for this vault
+            start_date = hourly_df['hour'].min()
+            end_date = hourly_df['hour'].max()
+            logger.info(f"Vault {symbol} price data range: {start_date} to {end_date} ({len(hourly_df)} hourly points)")
+            
+            # Add trace for this vault
+            color = colors[i % len(colors)]
+            
+            # Use different modes based on data size for performance
+            mode = 'lines+markers' if len(hourly_df) <= 100 else 'lines'
+            marker_size = 4 if len(hourly_df) <= 100 else 2
+            
+            fig.add_trace(go.Scatter(
+                x=hourly_df['hour'],
+                y=hourly_df['price'],
+                mode=mode,
+                name=symbol,
+                line=dict(color=color, width=2),
+                marker=dict(size=marker_size) if 'markers' in mode else None,
+                hovertemplate=f'<b>{symbol}</b><br>Price: $%{{y:.6f}}<br>%{{x}}<extra></extra>',
+                connectgaps=True  # Connect gaps in data
+            ))
+            
+        except Exception as e:
+            logger.error(f"Error processing price data for vault {symbol}: {e}", exc_info=True)
+            continue
+    
+    # Update layout
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time",
+        yaxis_title="Price (USD per Token)",
+        hovermode='x unified',
+        template='plotly_white',
+        height=500,
+        margin=dict(l=50, r=50, t=30, b=50),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
+        ),
+        # Add range selector for better navigation of extended timelines
+        xaxis=dict(
+            rangeselector=dict(
+                buttons=list([
+                    dict(count=24, label="24h", step="hour", stepmode="backward"),
+                    dict(count=7, label="7d", step="day", stepmode="backward"),
+                    dict(count=30, label="30d", step="day", stepmode="backward"),
+                    dict(step="all", label="All")
+                ])
+            ),
+            rangeslider=dict(visible=True),
+            type="date"
+        )
+    )
+    
+    # Format y-axis to show prices nicely
+    # Determine the price range to choose appropriate formatting
+    if fig.data:
+        all_prices = []
+        for trace in fig.data:
+            all_prices.extend(trace.y)
+        
+        if all_prices:
+            max_price = max(all_prices)
+            if max_price < 0.01:
+                # Very small prices - show more decimal places
+                fig.update_yaxes(tickformat='.8f')
+            elif max_price < 1:
+                # Small prices - show 6 decimal places
+                fig.update_yaxes(tickformat='.6f')
+            elif max_price < 1000:
+                # Normal prices - show 2 decimal places
+                fig.update_yaxes(tickformat='$.2f')
+            else:
+                # Large prices - show with comma separators
+                fig.update_yaxes(tickformat='$,.2f')
     
     return dcc.Graph(
         figure=fig,
