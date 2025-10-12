@@ -6,6 +6,7 @@ import logging
 import dash
 from dash import Dash, html, dcc
 import dash_bootstrap_components as dbc
+from flask_caching import Cache
 
 from config import config
 from src.components.layouts import DashboardHeader
@@ -26,6 +27,17 @@ app = Dash(
     title="Risk Dashboard",
     assets_folder="src/assets"
 )
+
+# Configure Flask-Caching with filesystem backend
+cache = Cache(app.server, config={
+    'CACHE_TYPE': 'filesystem',
+    'CACHE_DIR': 'cache',
+    'CACHE_DEFAULT_TIMEOUT': 60 * 60  # 1 hour
+})
+
+# Initialize cache utilities
+from src.utils.cached_data import setup_cache
+setup_cache(cache)
 
 # Define the app layout
 app.layout = html.Div([

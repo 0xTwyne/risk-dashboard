@@ -5,6 +5,7 @@ Contains reusable dashboard sections with specific business logic.
 
 import logging
 import asyncio
+import time
 from typing import Dict, Any, List
 from datetime import datetime
 from dash import html, dcc, callback, Output, Input, dash_table
@@ -84,13 +85,25 @@ def run_async(coro):
 
 async def fetch_collateral_vault_data() -> Dict[str, Any]:
     """
-    Fetch collateral vault snapshots and return summary metrics.
+    Fetch collateral vault snapshots with caching at the processed data level.
     
     Returns:
         Dict containing metrics or error information
     """
     try:
-        logger.info("Fetching collateral vaults snapshots...")
+        # Check for cached data first
+        from src.utils.cached_data import get_cached_collateral_vault_data, cache_collateral_vault_data
+        
+        cached_data = get_cached_collateral_vault_data()
+        if cached_data:
+            # Add cache metadata
+            cache_age = time.time() - cached_data.get("cached_at", time.time())
+            cached_data["cache_age"] = cache_age
+            cached_data["from_cache"] = True
+            logger.info(f"Using cached collateral vault data (age: {cache_age:.1f}s)")
+            return cached_data
+        
+        logger.info("Fetching fresh collateral vaults snapshots...")
         
         # Fetch data using the API client
         response = await api_client.get_collateral_vaults_snapshots(limit=100)
@@ -134,7 +147,8 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
         
         logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults with {len(pricing_warnings)} pricing warnings")
         
-        return {
+        # Prepare data for caching
+        data = {
             "error": None,
             "unique_vaults": unique_vaults_count,
             "total_snapshots": total_snapshots,
@@ -142,8 +156,15 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
             "snapshots": snapshots,  # Keep original for compatibility
             "enhanced_snapshots": enhanced_snapshots,
             "summary_metrics": summary_metrics,
-            "pricing_warnings": pricing_warnings
+            "pricing_warnings": pricing_warnings,
+            "cached_at": time.time(),
+            "from_cache": False
         }
+        
+        # Cache the processed data
+        cache_collateral_vault_data(data)
+        
+        return data
         
     except Exception as e:
         logger.error(f"Failed to fetch vault data: {e}", exc_info=True)
@@ -160,7 +181,7 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
 
 async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
     """
-    Fetch collateral vault snapshots at a specific block and return summary metrics.
+    Fetch collateral vault snapshots at a specific block with caching at the processed data level.
     
     Args:
         block_number: Block number to fetch data for
@@ -169,7 +190,19 @@ async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, A
         Dict containing metrics or error information
     """
     try:
-        logger.info(f"Fetching collateral vaults snapshots at block {block_number:,}...")
+        # Check for cached block data first
+        from src.utils.cached_data import get_cached_collateral_vault_block_data, cache_collateral_vault_block_data
+        
+        cached_data = get_cached_collateral_vault_block_data(block_number)
+        if cached_data:
+            # Add cache metadata
+            cache_age = time.time() - cached_data.get("cached_at", time.time())
+            cached_data["cache_age"] = cache_age
+            cached_data["from_cache"] = True
+            logger.info(f"Using cached collateral vault block data for block {block_number} (age: {cache_age:.1f}s)")
+            return cached_data
+        
+        logger.info(f"Fetching fresh collateral vaults snapshots at block {block_number:,}...")
         
         # Create block snapshot using the block snapshot client
         block_snapshot = await block_snapshot_client.create_snapshot_at_block(block_number)
@@ -232,7 +265,8 @@ async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, A
         
         logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults at block {block_number} with {len(pricing_warnings)} warnings")
         
-        return {
+        # Prepare data for caching
+        data = {
             "error": None,
             "unique_vaults": unique_vaults_count,
             "total_snapshots": total_snapshots,
@@ -244,8 +278,15 @@ async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, A
             "block_number": block_number,
             "block_timestamp": block_snapshot.timestamp,
             "evault_prices_block": block_snapshot.evault_prices_block,
-            "is_historical": True
+            "is_historical": True,
+            "cached_at": time.time(),
+            "from_cache": False
         }
+        
+        # Cache the processed block data
+        cache_collateral_vault_block_data(block_number, data)
+        
+        return data
         
     except Exception as e:
         logger.error(f"Failed to fetch vault data at block {block_number}: {e}", exc_info=True)
@@ -357,13 +398,25 @@ def CollateralVaultsSection(section_id: str = "collateral-section") -> html.Div:
 
 async def fetch_evaults_data() -> Dict[str, Any]:
     """
-    Fetch EVault metrics and return summary data.
+    Fetch EVault metrics with caching at the processed data level.
     
     Returns:
         Dict containing metrics or error information
     """
     try:
-        logger.info("Fetching EVaults latest metrics...")
+        # Check for cached data first
+        from src.utils.cached_data import get_cached_evaults_data, cache_evaults_data
+        
+        cached_data = get_cached_evaults_data()
+        if cached_data:
+            # Add cache metadata
+            cache_age = time.time() - cached_data.get("cached_at", time.time())
+            cached_data["cache_age"] = cache_age
+            cached_data["from_cache"] = True
+            logger.info(f"Using cached EVaults data (age: {cache_age:.1f}s)")
+            return cached_data
+        
+        logger.info("Fetching fresh EVaults latest metrics...")
         
         # Fetch data using the API client
         response = await api_client.get_evaults_latest()
@@ -382,11 +435,19 @@ async def fetch_evaults_data() -> Dict[str, Any]:
         
         logger.info(f"Successfully processed {total_vaults} EVault metrics")
         
-        return {
+        # Prepare data for caching
+        data = {
             "error": None,
             "total_vaults": total_vaults,
-            "metrics": metrics
+            "metrics": metrics,
+            "cached_at": time.time(),
+            "from_cache": False
         }
+        
+        # Cache the processed data
+        cache_evaults_data(data)
+        
+        return data
         
     except Exception as e:
         logger.error(f"Failed to fetch EVaults data: {e}", exc_info=True)
@@ -399,30 +460,16 @@ async def fetch_evaults_data() -> Dict[str, Any]:
 
 async def get_vault_symbol_mapping() -> Dict[str, str]:
     """
-    Fetch EVault data and create a mapping of vault addresses to symbols.
+    Get vault symbol mapping using Flask-Caching.
     
     Returns:
         Dict mapping vault address (lowercase) to symbol
     """
     try:
-        evaults_data = await fetch_evaults_data()
-        
-        if evaults_data.get("error"):
-            logger.warning(f"Failed to fetch evaults for symbol mapping: {evaults_data['error']}")
-            return {}
-        
-        # Create mapping of address -> symbol (case-insensitive)
-        symbol_mapping = {}
-        for metric in evaults_data.get("metrics", []):
-            vault_address = metric.vaultAddress.lower()
-            symbol = metric.symbol
-            symbol_mapping[vault_address] = symbol
-        
-        logger.info(f"Created symbol mapping for {len(symbol_mapping)} vaults")
-        return symbol_mapping
-        
+        from src.utils.cached_data import get_vault_symbol_mapping_cached
+        return get_vault_symbol_mapping_cached()
     except Exception as e:
-        logger.error(f"Failed to create vault symbol mapping: {e}", exc_info=True)
+        logger.error(f"Failed to get cached vault symbol mapping: {e}", exc_info=True)
         return {}
 
 
@@ -480,7 +527,7 @@ async def fetch_evaults_historical_data(
     max_records_per_vault: int = 20000
 ) -> List[Dict[str, Any]]:
     """
-    Fetch ALL historical data for multiple EVaults using pagination.
+    Fetch historical data with caching at the processed data level.
     
     Args:
         vault_addresses: List of vault addresses to fetch data for
@@ -489,91 +536,109 @@ async def fetch_evaults_historical_data(
     Returns:
         List of dicts with vault_address, symbol, and metrics
     """
-    vault_data = []
-    total_vaults = len(vault_addresses)
-    
-    logger.info(f"Fetching ALL historical data for {total_vaults} vaults (max {max_records_per_vault} records per vault)")
-    
-    for i, vault_address in enumerate(vault_addresses, 1):
-        try:
-            logger.info(f"Fetching historical data for vault {i}/{total_vaults}: {vault_address}")
-            logger.info(f"Vault address type: {type(vault_address)}, length: {len(vault_address)}")
-            
-            # Fetch all historical data using pagination
-            all_metrics = []
-            offset = 0
-            limit = 1000  # Maximum allowed by API
-            
-            while len(all_metrics) < max_records_per_vault:
-                logger.info(f"Fetching batch for {vault_address}: offset={offset}, limit={limit}")
+    try:
+        # Check for cached historical data first
+        from src.utils.cached_data import get_cached_evaults_historical_data, cache_evaults_historical_data
+        
+        cached_data = get_cached_evaults_historical_data(vault_addresses)
+        if cached_data:
+            logger.info(f"Using cached EVaults historical data for {len(vault_addresses)} vaults")
+            return cached_data
+        
+        # Fetch fresh historical data
+        vault_data = []
+        total_vaults = len(vault_addresses)
+        
+        logger.info(f"Fetching fresh historical data for {total_vaults} vaults (max {max_records_per_vault} records per vault)")
+        
+        for i, vault_address in enumerate(vault_addresses, 1):
+            try:
+                logger.info(f"Fetching historical data for vault {i}/{total_vaults}: {vault_address}")
+                logger.info(f"Vault address type: {type(vault_address)}, length: {len(vault_address)}")
                 
-                response = await api_client.get_evault_metrics(
-                    address=vault_address,
-                    limit=limit,
-                    offset=offset
-                )
+                # Fetch all historical data using pagination
+                all_metrics = []
+                offset = 0
+                limit = 1000  # Maximum allowed by API
                 
-                if isinstance(response, dict) and "error" in response:
-                    logger.error(f"API error fetching batch for vault {vault_address}: {response['error']}")
-                    logger.error(f"Full response: {response}")
-                    break
+                while len(all_metrics) < max_records_per_vault:
+                    logger.info(f"Fetching batch for {vault_address}: offset={offset}, limit={limit}")
+                    
+                    response = await api_client.get_evault_metrics(
+                        address=vault_address,
+                        limit=limit,
+                        offset=offset
+                    )
+                    
+                    if isinstance(response, dict) and "error" in response:
+                        logger.error(f"API error fetching batch for vault {vault_address}: {response['error']}")
+                        logger.error(f"Full response: {response}")
+                        break
+                    
+                    # Extract metrics from successful response
+                    batch_metrics = response.metrics or []
+                    total_count = getattr(response, 'totalCount', 0) or 0
+                    current_count = getattr(response, 'count', len(batch_metrics)) or len(batch_metrics)
+                    
+                    logger.info(f"API Response - batch_metrics: {len(batch_metrics)}, totalCount: {total_count}, count: {current_count}")
+                    logger.debug(f"Response object type: {type(response)}")
+                    logger.debug(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                    
+                    if not batch_metrics:
+                        logger.info(f"No more metrics found for vault {vault_address} at offset {offset}")
+                        break
+                    
+                    all_metrics.extend(batch_metrics)
+                    logger.info(f"Fetched {len(batch_metrics)} metrics, total so far: {len(all_metrics)}/{total_count if total_count > 0 else 'unknown'}")
+                    
+                    # Check if we've fetched all available data
+                    # If totalCount is available and we've reached it, stop
+                    if total_count > 0 and len(all_metrics) >= total_count:
+                        logger.info(f"Fetched all available data for vault {vault_address}: {len(all_metrics)}/{total_count} records")
+                        break
+                    
+                    # If we got fewer metrics than requested, we've reached the end
+                    if len(batch_metrics) < limit:
+                        logger.info(f"Reached end of data for vault {vault_address}: got {len(batch_metrics)} < {limit} requested")
+                        break
+                    
+                    # Move to next batch
+                    offset += limit
+                    
+                    # Safety check to prevent infinite loops
+                    if len(all_metrics) >= max_records_per_vault:
+                        logger.warning(f"Reached maximum records limit ({max_records_per_vault}) for vault {vault_address}")
+                        break
                 
-                # Extract metrics from successful response
-                batch_metrics = response.metrics or []
-                total_count = getattr(response, 'totalCount', 0) or 0
-                current_count = getattr(response, 'count', len(batch_metrics)) or len(batch_metrics)
+                if not all_metrics:
+                    logger.warning(f"No historical metrics found for vault {vault_address}")
+                    continue
                 
-                logger.info(f"API Response - batch_metrics: {len(batch_metrics)}, totalCount: {total_count}, count: {current_count}")
-                logger.debug(f"Response object type: {type(response)}")
-                logger.debug(f"Response attributes: {[attr for attr in dir(response) if not attr.startswith('_')]}")
+                # Get symbol from the first metric
+                symbol = all_metrics[0].symbol if all_metrics else "Unknown"
                 
-                if not batch_metrics:
-                    logger.info(f"No more metrics found for vault {vault_address} at offset {offset}")
-                    break
+                vault_data.append({
+                    "vault_address": vault_address,
+                    "symbol": symbol,
+                    "metrics": all_metrics
+                })
                 
-                all_metrics.extend(batch_metrics)
-                logger.info(f"Fetched {len(batch_metrics)} metrics, total so far: {len(all_metrics)}/{total_count if total_count > 0 else 'unknown'}")
+                logger.info(f"Successfully fetched {len(all_metrics)} historical metrics for vault {vault_address} ({symbol})")
                 
-                # Check if we've fetched all available data
-                # If totalCount is available and we've reached it, stop
-                if total_count > 0 and len(all_metrics) >= total_count:
-                    logger.info(f"Fetched all available data for vault {vault_address}: {len(all_metrics)}/{total_count} records")
-                    break
-                
-                # If we got fewer metrics than requested, we've reached the end
-                if len(batch_metrics) < limit:
-                    logger.info(f"Reached end of data for vault {vault_address}: got {len(batch_metrics)} < {limit} requested")
-                    break
-                
-                # Move to next batch
-                offset += limit
-                
-                # Safety check to prevent infinite loops
-                if len(all_metrics) >= max_records_per_vault:
-                    logger.warning(f"Reached maximum records limit ({max_records_per_vault}) for vault {vault_address}")
-                    break
-            
-            if not all_metrics:
-                logger.warning(f"No historical metrics found for vault {vault_address}")
+            except Exception as e:
+                logger.error(f"Error fetching historical data for vault {vault_address}: {e}", exc_info=True)
                 continue
-            
-            # Get symbol from the first metric
-            symbol = all_metrics[0].symbol if all_metrics else "Unknown"
-            
-            vault_data.append({
-                "vault_address": vault_address,
-                "symbol": symbol,
-                "metrics": all_metrics
-            })
-            
-            logger.info(f"Successfully fetched {len(all_metrics)} historical metrics for vault {vault_address} ({symbol})")
-            
-        except Exception as e:
-            logger.error(f"Error fetching historical data for vault {vault_address}: {e}", exc_info=True)
-            continue
-    
-    logger.info(f"Successfully fetched historical data for {len(vault_data)}/{total_vaults} vaults")
-    return vault_data
+        
+        logger.info(f"Successfully fetched historical data for {len(vault_data)}/{total_vaults} vaults")
+        
+        # Cache the processed historical data
+        cache_evaults_historical_data(vault_addresses, vault_data)
+        
+        return vault_data
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch historical data: {e}", exc_info=True)
+        return []
 
 
 def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
@@ -758,6 +823,15 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     if pathname != "/collateralVaults":
         return [], "", "", "", "", "", ""
     
+    # Clear cache when refresh button is clicked
+    if n_clicks and n_clicks > 0:
+        try:
+            from src.utils.cached_data import clear_collateral_cache
+            clear_collateral_cache()
+            logger.info("Collateral vault cache cleared due to refresh button click")
+        except Exception as e:
+            logger.error(f"Failed to clear collateral vault cache: {e}", exc_info=True)
+    
     # Fetch vault symbol mapping
     symbol_mapping = run_async(get_vault_symbol_mapping())
     logger.info(f"Fetched symbol mapping with {len(symbol_mapping)} vaults")
@@ -811,9 +885,27 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                 )
             )
         else:
+            # Get cache status information
+            cache_info = ""
+            cache_age = data.get("cache_age", 0)
+            from_cache = data.get("from_cache", False)
+            
+            if from_cache:
+                cache_info = f" (Cached {cache_age:.1f}s ago)"
+            
+            try:
+                from src.utils.cached_data import get_cache_stats
+                cache_stats = get_cache_stats()
+                if not cache_stats.get("error") and not cache_info:
+                    cache_info = f" (Cache: {cache_stats.get('cache_type', 'unknown')}, TTL: {cache_stats.get('default_timeout', 300)}s)"
+            except Exception as e:
+                logger.debug(f"Could not get cache stats: {e}")
+            
+            # Create enhanced status message with cache info
+            cache_status = " [Cached]" if from_cache and (n_clicks == 0 or n_clicks is None) else " [Fresh Data]"
             success_alerts.append(
                 dbc.Alert(
-                    "Latest data loaded successfully", 
+                    f"Latest data loaded successfully{cache_status}{cache_info}", 
                     color="success",
                     dismissable=True,
                     duration=3000
@@ -1085,6 +1177,15 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
     if pathname != "/evaults":
         return [], "", "", "", ""
     
+    # Clear cache when refresh button is clicked
+    if n_clicks and n_clicks > 0:
+        try:
+            from src.utils.cached_data import clear_evaults_cache
+            clear_evaults_cache()
+            logger.info("EVaults cache cleared due to refresh button click")
+        except Exception as e:
+            logger.error(f"Failed to clear EVaults cache: {e}", exc_info=True)
+    
     logger.info(f"Updating EVaults metrics for {vault_type} vaults...")
     
     # Fetch the data and historical data in a single async call
@@ -1105,8 +1206,26 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             retry_callback="evaults-section-refresh"
         )
     else:
+        # Get cache status information
+        cache_info = ""
+        cache_age = data.get("cache_age", 0)
+        from_cache = data.get("from_cache", False)
+        
+        if from_cache:
+            cache_info = f" (Cached {cache_age:.1f}s ago)"
+        
+        try:
+            from src.utils.cached_data import get_cache_stats
+            cache_stats = get_cache_stats()
+            if not cache_stats.get("error") and not cache_info:
+                cache_info = f" (Cache: {cache_stats.get('cache_type', 'unknown')}, TTL: {cache_stats.get('default_timeout', 300)}s)"
+        except Exception as e:
+            logger.debug(f"Could not get cache stats: {e}")
+        
+        # Create enhanced status message with cache info
+        cache_status = " [Cached]" if from_cache and (n_clicks == 0 or n_clicks is None) else " [Fresh Data]"
         status_message = dbc.Alert(
-            "Data loaded successfully", 
+            f"Data loaded successfully{cache_status}{cache_info}", 
             color="success",
             dismissable=True,
             duration=3000  # Auto-dismiss after 3 seconds
