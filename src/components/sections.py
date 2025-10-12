@@ -826,13 +826,18 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     # Clear cache when refresh button is clicked
     if n_clicks and n_clicks > 0:
         try:
-            from src.utils.cached_data import clear_collateral_cache
+            from src.utils.cached_data import clear_collateral_cache, clear_evaults_cache
             clear_collateral_cache()
-            logger.info("Collateral vault cache cleared due to refresh button click")
+            clear_evaults_cache()  # Also clear EVaults cache since symbol mapping depends on it
+            logger.info("Collateral and EVaults cache cleared due to refresh button click")
         except Exception as e:
-            logger.error(f"Failed to clear collateral vault cache: {e}", exc_info=True)
+            logger.error(f"Failed to clear cache: {e}", exc_info=True)
     
-    # Fetch vault symbol mapping
+    # Ensure EVaults data is cached first by fetching it
+    evaults_data = run_async(fetch_evaults_data())
+    logger.info(f"EVaults data cached with {evaults_data.get('total_vaults', 0)} vaults")
+    
+    # Now fetch vault symbol mapping (which will use the cached EVaults data)
     symbol_mapping = run_async(get_vault_symbol_mapping())
     logger.info(f"Fetched symbol mapping with {len(symbol_mapping)} vaults")
     
@@ -1871,7 +1876,11 @@ def update_liquidations_data(n_clicks, mode, pathname):
     
     logger.info(f"Updating liquidations data for {mode} mode...")
     
-    # Fetch vault symbol mapping
+    # Ensure EVaults data is cached first by fetching it
+    evaults_data = run_async(fetch_evaults_data())
+    logger.info(f"EVaults data cached with {evaults_data.get('total_vaults', 0)} vaults")
+    
+    # Now fetch vault symbol mapping (which will use the cached EVaults data)
     symbol_mapping = run_async(get_vault_symbol_mapping())
     logger.info(f"Fetched symbol mapping with {len(symbol_mapping)} vaults")
     

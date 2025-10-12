@@ -146,18 +146,23 @@ def get_cached_evaults_historical_data(vault_addresses: List[str]) -> List[Dict[
 def _get_vault_symbol_mapping_impl() -> Dict[str, str]:
     """
     Implementation of vault symbol mapping.
+    Only uses cached data - does not fetch fresh data to avoid async issues.
     
     Returns:
         Dict mapping vault address (lowercase) to symbol
     """
     try:
-        logger.info("Fetching vault symbol mapping (cached)...")
+        logger.info("Getting vault symbol mapping from cache...")
         
-        # Get EVaults data using the cached function
-        evaults_data = fetch_evaults_data_cached()
+        # Get EVaults data from cache only - don't fetch fresh to avoid async issues
+        evaults_data = get_cached_evaults_data()
+        
+        if not evaults_data:
+            logger.warning("No cached EVaults data available for symbol mapping")
+            return {}
         
         if evaults_data.get("error"):
-            logger.warning(f"Failed to fetch evaults for symbol mapping (cached): {evaults_data['error']}")
+            logger.warning(f"Error in cached EVaults data for symbol mapping: {evaults_data['error']}")
             return {}
         
         # Create mapping of address -> symbol (case-insensitive)
@@ -167,11 +172,11 @@ def _get_vault_symbol_mapping_impl() -> Dict[str, str]:
             symbol = metric.symbol
             symbol_mapping[vault_address] = symbol
         
-        logger.info(f"Created symbol mapping for {len(symbol_mapping)} vaults (cached)")
+        logger.info(f"Created symbol mapping for {len(symbol_mapping)} vaults from cache")
         return symbol_mapping
         
     except Exception as e:
-        logger.error(f"Failed to create vault symbol mapping (cached): {e}", exc_info=True)
+        logger.error(f"Failed to create vault symbol mapping from cache: {e}", exc_info=True)
         return {}
 
 
