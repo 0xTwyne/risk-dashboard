@@ -175,38 +175,50 @@ class APIClient:
         self,
         limit: int = 50,
         offset: int = 0,
+        block_number: Optional[int] = None,
+        timestamp: Optional[int] = None,
+        vault_addresses: Optional[List[str]] = None,
         can_liquidate: Optional[bool] = None,
         is_externally_liquidated: Optional[bool] = None
     ) -> Union[CollateralVaultsSnapshotsResponse, Dict[str, str]]:
         """
-        Get latest position snapshots for collateral vaults.
-        
+        Get position snapshots for collateral vaults.
+
         Args:
             limit: Number of results to return
             offset: Number of results to skip
+            block_number: Target block number (defaults to latest available block)
+            timestamp: Target Unix timestamp (alternative to block_number)
+            vault_addresses: List of vault addresses to filter for
             can_liquidate: Filter by liquidation status
             is_externally_liquidated: Filter by external liquidation status
-            
+
         Returns:
             API response or error dict
         """
         params = {"limit": limit, "offset": offset}
-        
+
+        if block_number is not None:
+            params["blockNumber"] = block_number
+        if timestamp is not None:
+            params["timestamp"] = timestamp
+        if vault_addresses is not None and len(vault_addresses) > 0:
+            params["vaultAddresses"] = ",".join(vault_addresses)
         if can_liquidate is not None:
             params["canLiquidate"] = str(can_liquidate).lower()
         if is_externally_liquidated is not None:
             params["isExternallyLiquidated"] = str(is_externally_liquidated).lower()
-        
+
         logger.info(f"Fetching collateral vaults snapshots with params: {params}")
-        
+
         try:
-            data = await self._make_request("GET", "collateral_latest_snapshots", params)
+            data = await self._make_request("GET", "collateral_snapshots", params)
             if "error" in data:
                 logger.error(f"API returned error for collateral snapshots: {data['error']}")
                 return data
-            
+
             response = CollateralVaultsSnapshotsResponse(**data)
-            logger.info(f"Successfully fetched {len(response.latestSnapshots)} collateral vault snapshots")
+            logger.info(f"Successfully fetched {len(response.snapshots)} collateral vault snapshots")
             return response
         except Exception as e:
             logger.error(f"Failed to get collateral vaults snapshots: {e}", exc_info=True)

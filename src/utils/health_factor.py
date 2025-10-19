@@ -33,8 +33,7 @@ def calculate_health_factor(enhanced_snapshot: Dict[str, Any]) -> float:
         debt_usd = usd_values.get('max_repay_usd', 0.0)
         
         # Get liqLTV from snapshot (scaled by 1e4, convert to decimal)
-        twyne_liq_ltv_raw = float(snapshot.twyneLiqLtv) if snapshot.twyneLiqLtv != "0" else 0.0
-        liq_ltv_decimal = twyne_liq_ltv_raw / 1e4
+        liq_ltv_decimal = float(snapshot.twyneLiqLtv) if snapshot.twyneLiqLtv != "0" else 0.0
         
         # If debt is zero, return 2 (capped high health factor)
         if debt_usd == 0.0:

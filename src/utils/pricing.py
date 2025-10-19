@@ -23,10 +23,10 @@ def calculate_evault_token_price(evault_metric: Any) -> Tuple[float, Optional[st
     """
     try:
         # Extract values from metric
-        total_assets_raw = evault_metric.totalAssets
-        total_assets_usd_raw = evault_metric.totalAssetsUsd
-        decimals = evault_metric.decimals
-        vault_address = getattr(evault_metric, 'vaultAddress', 'unknown')
+        total_assets_raw = evault_metric.total_assets
+        total_assets_usd_raw = evault_metric.total_assets_usd
+        decimals = int(evault_metric.decimals)
+        vault_address = getattr(evault_metric, 'vault_address', 'unknown')
         
         # Validate inputs
         if total_assets_raw == "0" or not total_assets_raw:
@@ -75,7 +75,7 @@ def create_evault_price_lookup(evault_metrics: List[Any]) -> Tuple[Dict[str, flo
     error_messages = []
     
     for metric in evault_metrics:
-        vault_address = getattr(metric, 'vaultAddress', None)
+        vault_address = getattr(metric, 'vault_address', None)
         if not vault_address:
             error_messages.append("EVault metric missing vault address")
             continue
@@ -112,20 +112,12 @@ def calculate_collateral_usd_values(
     vault_address = getattr(snapshot, 'vaultAddress', 'unknown')
     
     try:
-        # Extract raw native amounts
-        max_release_raw = float(snapshot.maxRelease) if snapshot.maxRelease != "0" else 0.0
-        max_repay_raw = float(snapshot.maxRepay) if snapshot.maxRepay != "0" else 0.0
-        total_assets_raw = float(snapshot.totalAssetsDepositedOrReserved) if snapshot.totalAssetsDepositedOrReserved != "0" else 0.0
-        user_collateral_raw = float(snapshot.userOwnedCollateral) if snapshot.userOwnedCollateral != "0" else 0.0
-        
-        # Note: Native amounts are already in the correct scale (wei format)
-        # We need to scale them down by 1e18 to get actual token amounts
-        scaling_factor = 1e18
-        
-        max_release_tokens = max_release_raw / scaling_factor
-        max_repay_tokens = max_repay_raw / scaling_factor
-        total_assets_tokens = total_assets_raw / scaling_factor
-        user_collateral_tokens = user_collateral_raw / scaling_factor
+        # API v1.2: All token amounts are already floats, pre-scaled by token decimals
+        # Extract token amounts - already human-readable
+        max_release_tokens = snapshot.maxRelease if snapshot.maxRelease != 0 else 0.0
+        max_repay_tokens = snapshot.maxRepay if snapshot.maxRepay != 0 else 0.0
+        total_assets_tokens = snapshot.totalAssetsDepositedOrReserved if snapshot.totalAssetsDepositedOrReserved != 0 else 0.0
+        user_collateral_tokens = snapshot.userOwnedCollateral if snapshot.userOwnedCollateral != 0 else 0.0
         
         # Calculate USD values using prices
         usd_values['max_release_usd'] = max_release_tokens * credit_vault_price

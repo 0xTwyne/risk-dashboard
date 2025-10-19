@@ -17,7 +17,6 @@ import plotly.express as px
 
 from src.components import PageContainer, SectionCard, LoadingState, ErrorState, ErrorAlert
 from src.api import api_client
-from src.utils.pricing import calculate_evault_token_price
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -42,478 +41,311 @@ dash.register_page(
 )
 
 
-async def fetch_evault_historical_data(
-    vault_addresses: List[str], 
-    start_time: Optional[int] = None,
-    end_time: Optional[int] = None
+async def fetch_vault_chart_data(
+    vault_address: str,
+    days: int = 1
 ) -> Dict[str, Any]:
     """
-    Fetch historical EVault metrics for multiple vault addresses.
-    
-    Args:
-        vault_addresses: List of vault addresses to fetch data for
-        start_time: Start time filter (Unix timestamp)
-        end_time: End time filter (Unix timestamp)
-        
-    Returns:
-        Dict containing historical metrics data or error information
-    """
-    try:
-        logger.info(f"Fetching historical EVault data for {len(vault_addresses)} vaults")
-        
-        all_metrics = {}
-        errors = []
-        
-        # Fetch data for each vault
-        for vault_address in vault_addresses:
-            if not vault_address:
-                continue
-                
-            logger.info(f"Fetching EVault metrics for {vault_address}")
-            
-            response = await api_client.get_evault_metrics(
-                address=vault_address,
-                limit=1000,  # High limit to get comprehensive history
-                start_time=start_time,
-                end_time=end_time
-            )
-            
-            if isinstance(response, dict) and "error" in response:
-                error_msg = f"Failed to fetch EVault data for {vault_address}: {response['error']}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                continue
-            
-            metrics = getattr(response, 'metrics', []) or []
-            if metrics:
-                all_metrics[vault_address] = metrics
-                logger.info(f"Fetched {len(metrics)} historical metrics for {vault_address}")
-            else:
-                error_msg = f"No historical metrics found for {vault_address}"
-                logger.warning(error_msg)
-                errors.append(error_msg)
-        
-        return {
-            "error": None if not errors else "; ".join(errors),
-            "metrics": all_metrics,
-            "vault_count": len(all_metrics)
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch EVault historical data: {e}")
-        return {
-            "error": str(e),
-            "metrics": {},
-            "vault_count": 0
-        }
+    Fetch hourly snapshots for chart visualization.
+    Uses the snapshots endpoint with timestamp parameter to get pre-priced snapshots.
 
-
-async def fetch_vault_history_data(vault_address: str) -> Dict[str, Any]:
-    """
-    Fetch all historical events for a specific collateral vault.
-    
     Args:
         vault_address: The vault address to fetch data for
-        
+        days: Number of days of history to fetch (default: 1)
+
     Returns:
-        Dict containing history data or error information
+        Dict containing chart snapshot data or error information
     """
     try:
-        logger.info(f"Fetching all historical data for collateral vault: {vault_address}")
-        
-        # Fetch all data using the API client with a high limit
-        response = await api_client.get_collateral_vault_history(
-            address=vault_address,
-            limit=10000  # High limit to get all events
-        )
-        
-        if isinstance(response, dict) and "error" in response:
-            logger.error(f"API error: {response['error']}")
-            return {
-                "error": response["error"],
-                "snapshots": []
-            }
-        
-        # Extract snapshots from successful response
-        snapshots = response.snapshots
-        
-        logger.info(f"Successfully fetched {len(snapshots)} historical snapshots for vault {vault_address}")
-        
+        import time
+
+        # Step 1: Get current timestamp
+        current_timestamp = int(time.time())
+
+        # Step 2: Create list of hourly timestamps going back N days
+        hours = days * 24
+        hour_in_seconds = 3600
+
+        # Create timestamps for each hour going backwards
+        timestamps = []
+        for i in range(hours + 1):  # +1 to include the current hour
+            timestamp = current_timestamp - (i * hour_in_seconds)
+            timestamps.append(timestamp)
+
+        # Reverse to have oldest first
+        timestamps.reverse()
+
+        logger.info(f"Fetching {len(timestamps)} hourly snapshots for chart for vault {vault_address} over {days} days")
+
+        # Step 3: Fetch snapshots at each timestamp using the snapshots endpoint
+        all_snapshots = []
+
+        # Fetch snapshots in batches to avoid too many API calls
+        # We'll fetch one snapshot per hour using the timestamp parameter
+        for i, ts in enumerate(timestamps):
+            try:
+                response = await api_client.get_collateral_vaults_snapshots(
+                    limit=1,  # We only need one snapshot per timestamp
+                    vault_addresses=[vault_address],
+                    timestamp=ts
+                )
+
+                if isinstance(response, dict) and "error" in response:
+                    logger.warning(f"API error at timestamp {ts}: {response['error']}")
+                    continue
+
+                # Add snapshots from this timestamp
+                if response.snapshots and len(response.snapshots) > 0:
+                    # Only add if we got a snapshot
+                    all_snapshots.extend(response.snapshots)
+
+                # Log progress every 24 hours (24 snapshots)
+                if (i + 1) % 24 == 0:
+                    logger.info(f"Fetched {i + 1}/{len(timestamps)} chart snapshots...")
+
+            except Exception as e:
+                logger.warning(f"Error fetching snapshot at timestamp {ts}: {e}")
+                continue
+
+        logger.info(f"Successfully fetched {len(all_snapshots)} pre-priced snapshots for chart")
+
         return {
             "error": None,
-            "snapshots": snapshots,
-            "vault_address": vault_address
+            "snapshots": all_snapshots,
+            "vault_address": vault_address,
+            "days": days,
+            "timestamps_requested": len(timestamps),
+            "snapshots_received": len(all_snapshots)
         }
-        
+
     except Exception as e:
-        logger.error(f"Failed to fetch collateral vault history for {vault_address}: {e}")
+        logger.error(f"Failed to fetch collateral vault chart data for {vault_address}: {e}")
         return {
             "error": str(e),
             "snapshots": []
         }
 
 
-def safe_convert_bigint_to_int(value) -> int:
+async def fetch_vault_history_events(
+    vault_address: str,
+    start_time: int = None,
+    end_time: int = None,
+) -> Dict[str, Any]:
     """
-    Safely convert BigInt, string, or numeric value to integer.
-    
+    Fetch actual position update events (transactions) for the table.
+    Uses the history endpoint to get all actual vault events with state and txType.
+
     Args:
-        value: Value that might be BigInt, string, or number
-        
+        vault_address: The vault address to fetch data for
+        start_time: Start time in seconds since epoch
+        end_time: End time in seconds since epoch
+
     Returns:
-        Integer value
+        Dict containing history events or error information
+    """
+    try:
+        import time
+        if end_time is None:
+            end_time = int(time.time())
+        if start_time is None:
+            start_time = 0
+
+        logger.info(f"Fetching history events for vault {vault_address} from {start_time} to {end_time}")
+
+        # Fetch data using the history endpoint
+        response = await api_client.get_collateral_vault_history(
+            address=vault_address,
+            limit=10000,  # High limit to get all events
+            start_time=start_time,
+            end_time=end_time
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            logger.error(f"API error: {response['error']}")
+            return {
+                "error": response["error"],
+                "snapshots": []
+            }
+
+        # Extract snapshots from successful response
+        snapshots = response.snapshots
+
+        logger.info(f"Successfully fetched {len(snapshots)} history events for vault {vault_address}")
+
+        return {
+            "error": None,
+            "snapshots": snapshots,
+            "vault_address": vault_address,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to fetch collateral vault history events for {vault_address}: {e}")
+        return {
+            "error": str(e),
+            "snapshots": []
+        }
+
+
+def safe_convert_to_float_from_string(value) -> float:
+    """
+    Safely convert value to float, handling None values.
+    API v1.2: Values are already JSON numbers (floats), just need to handle None.
+
+    Args:
+        value: Numeric value (float) or None
+
+    Returns:
+        Float value (0.0 if None)
     """
     if value is None:
-        return 0
-    
-    # Handle string representations of numbers
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return 0
-    
-    # Handle BigInt or other numeric types
+        return 0.0
+
+    # Values are already floats from API, but handle any type conversion just in case
     try:
-        return int(value)
+        return float(value)
     except (ValueError, TypeError):
-        return 0
+        return 0.0
+
+
+def safe_convert_to_float(value) -> float:
+    """
+    Safely convert value to float, handling None values.
+
+    Args:
+        value: Value that might be None, float, or numeric
+
+    Returns:
+        Float value (0.0 if None or invalid)
+    """
+    if value is None:
+        return 0.0
+
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def create_dataframe_from_snapshots(snapshots: List) -> pd.DataFrame:
     """
     Convert CollateralVaultSnapshot objects to a pandas DataFrame.
-    
+    API v1.2: All numeric values are JSON numbers (floats/ints), pre-scaled and human-readable.
+
     Args:
         snapshots: List of CollateralVaultSnapshot objects
-        
+
     Returns:
         pandas DataFrame with all snapshot data
     """
     if not snapshots:
         return pd.DataFrame()
-    
+
     # Convert snapshots to list of dictionaries
     data = []
     for snapshot in snapshots:
-        # Convert snapshot to dictionary using all fields from CollateralVaultSnapshot
-        # Handle BigInt conversion for numeric fields
+        # API v1.2: All numeric values are already JSON numbers (floats/ints), pre-scaled
+        # Token amounts, USD values, and LTV are all human-readable numbers
         row = {
-            'chainId': str(snapshot.chainId),
+            'chainId': str(snapshot.chainId) if snapshot.chainId else 'N/A',
             'vaultAddress': str(snapshot.vaultAddress),
             'underlyingCollateralVault': str(snapshot.underlyingCollateralVault),
             'creditVault': str(snapshot.creditVault),
             'debtVault': str(snapshot.debtVault),
-            'maxRelease': safe_convert_bigint_to_int(snapshot.maxRelease),
-            'maxRepay': safe_convert_bigint_to_int(snapshot.maxRepay),
-            'totalAssetsDepositedOrReserved': safe_convert_bigint_to_int(snapshot.totalAssetsDepositedOrReserved),
-            'userOwnedCollateral': safe_convert_bigint_to_int(snapshot.userOwnedCollateral),
-            'twyneLiqLtv': safe_convert_bigint_to_int(snapshot.twyneLiqLtv),
+            # Token amounts - already floats from API
+            'maxRelease': safe_convert_to_float_from_string(snapshot.maxRelease),
+            'maxRepay': safe_convert_to_float_from_string(snapshot.maxRepay),
+            'totalAssetsDepositedOrReserved': safe_convert_to_float_from_string(snapshot.totalAssetsDepositedOrReserved),
+            'userOwnedCollateral': safe_convert_to_float_from_string(snapshot.userOwnedCollateral),
+            # LTV - already float from API (e.g., 0.75 = 75%)
+            'twyneLiqLtv': safe_convert_to_float_from_string(snapshot.twyneLiqLtv),
             'canLiquidate': bool(snapshot.canLiquidate),
             'isExternallyLiquidated': bool(snapshot.isExternallyLiquidated),
-            'maxReleaseUsd': safe_convert_bigint_to_int(snapshot.maxReleaseUsd),
-            'maxRepayUsd': safe_convert_bigint_to_int(snapshot.maxRepayUsd),
-            'totalAssetsDepositedOrReservedUsd': safe_convert_bigint_to_int(snapshot.totalAssetsDepositedOrReservedUsd),
-            'userOwnedCollateralUsd': safe_convert_bigint_to_int(snapshot.userOwnedCollateralUsd),
-            'blockNumber': safe_convert_bigint_to_int(snapshot.blockNumber),
-            'blockTimestamp': safe_convert_bigint_to_int(snapshot.blockTimestamp),
-            'logIndex': safe_convert_bigint_to_int(snapshot.logIndex),
-            'state': str(snapshot.state),
-            'txType': str(snapshot.txType)
+            # USD values - already floats from API
+            'maxReleaseUsd': safe_convert_to_float(snapshot.maxReleaseUsd),
+            'maxRepayUsd': safe_convert_to_float(snapshot.maxRepayUsd),
+            'totalAssetsDepositedOrReservedUsd': safe_convert_to_float(snapshot.totalAssetsDepositedOrReservedUsd),
+            'userOwnedCollateralUsd': safe_convert_to_float(snapshot.userOwnedCollateralUsd),
+            # Block info - already integers from API
+            'blockNumber': snapshot.blockNumber,
+            'blockTimestamp': snapshot.blockTimestamp,
+            'logIndex': snapshot.logIndex,
+            # State info
+            'state': str(snapshot.state) if snapshot.state else 'post',  # Default to 'post' as snapshots endpoint only returns post-state
+            'txType': str(snapshot.txType) if snapshot.txType else 'N/A'
         }
         data.append(row)
-    
-    # Create DataFrame - all numeric fields are now properly converted to integers
+
+    # Create DataFrame
     df = pd.DataFrame(data)
-    
+
     return df
 
 
-def create_historical_usd_progression(
-    snapshots_df: pd.DataFrame,
-    evault_metrics: Dict[str, List]
+def create_usd_progression_from_priced_snapshots(
+    plot_df: pd.DataFrame
 ) -> Tuple[Optional[go.Figure], List[str]]:
     """
-    Create a line plot showing continuous USD progression of vault position over time.
-    
-    This creates a time-continuous chart where:
-    1. Position amounts change at CollateralVault event timestamps
-    2. USD values change continuously as asset prices change (from EVault data)
-    3. The chart shows the evolution of the position in USD terms over time
-    
+    Create a line plot showing USD progression from pre-priced snapshots.
+    Snapshots already contain USD values calculated by the API.
+
     Args:
-        snapshots_df: DataFrame with collateral vault snapshots (filtered for 'post' state)
-        evault_metrics: Dict mapping vault addresses to their historical metrics
-        
+        plot_df: Snapshot DataFrame
+
     Returns:
         Tuple of (plotly figure or None, error messages list)
     """
     errors = []
-    
+
+    print(f"Plotting progression from {len(plot_df)} snapshots")
+
     try:
-        if snapshots_df.empty:
-            return None, ["No snapshot data available"]
-        
-        # Get unique vault addresses from snapshots
-        credit_vault = snapshots_df['creditVault'].iloc[0] if 'creditVault' in snapshots_df.columns else None
-        debt_vault = snapshots_df['debtVault'].iloc[0] if 'debtVault' in snapshots_df.columns else None
-        underlying_vault = snapshots_df['underlyingCollateralVault'].iloc[0] if 'underlyingCollateralVault' in snapshots_df.columns else None
-        
-        if not all([credit_vault, debt_vault, underlying_vault]):
-            return None, ["Missing vault address information in snapshots"]
-        
-        logger.info(f"Creating continuous USD progression for vaults: credit={credit_vault}, debt={debt_vault}, underlying={underlying_vault}")
-        
-        # Debug: Check the data types in the DataFrame
-        logger.info(f"DataFrame dtypes: {snapshots_df.dtypes}")
-        logger.info(f"Sample blockTimestamp values: {snapshots_df['blockTimestamp'].head().tolist()}")
-        
-        # Create price time series from EVault metrics
-        price_time_series = {}
-        all_timestamps = set()
-        
-        for vault_addr, metrics in evault_metrics.items():
-            if not metrics:
-                continue
-                
-            vault_prices = []
-            for metric in metrics:
-                price, error = calculate_evault_token_price(metric)
-                if error:
-                    errors.append(error)
-                    continue
-                
-                # Safely convert BigInt timestamps and block numbers
-                timestamp = safe_convert_bigint_to_int(metric.blockTimestamp)
-                block_number = safe_convert_bigint_to_int(metric.blockNumber)
-                
-                vault_prices.append({
-                    'timestamp': timestamp,
-                    'price': price,
-                    'blockNumber': block_number
-                })
-                all_timestamps.add(timestamp)
-            
-            if vault_prices:
-                # Sort by timestamp
-                vault_prices.sort(key=lambda x: x['timestamp'])
-                price_time_series[vault_addr] = vault_prices
-        
-        if not price_time_series:
-            return None, ["No valid price data available from EVault metrics"]
-        
-        # Create position time series from CollateralVault snapshots
-        # Sort snapshots by timestamp (ascending)
-        snapshots_sorted = snapshots_df.sort_values('blockTimestamp').copy()
-        
-        position_changes = []
-        for _, snapshot in snapshots_sorted.iterrows():
-            # All values should now be properly converted integers from the DataFrame
-            timestamp = int(snapshot['blockTimestamp'])
-            block_number = int(snapshot['blockNumber'])
-            
-            # Debug: Log the types and values
-            logger.info(f"Processing snapshot - timestamp: {timestamp} (type: {type(timestamp)}), block: {block_number} (type: {type(block_number)})")
-            
-            position_changes.append({
-                'timestamp': timestamp,
-                'maxRelease': float(snapshot['maxRelease']) / 1e18,  # Convert to tokens
-                'maxRepay': float(snapshot['maxRepay']) / 1e18,
-                'userCollateral': float(snapshot['userOwnedCollateral']) / 1e18,
-                'blockNumber': block_number
-            })
-            all_timestamps.add(timestamp)
-        
-        if not position_changes:
-            return None, ["No position changes available"]
-        
-        # Determine the overall time range
-        all_timestamps = sorted(list(all_timestamps))
-        if not all_timestamps:
-            return None, ["No timestamp data available"]
-        
-        latest_timestamp = max(all_timestamps)
-        # Show progression up to 1 week before the latest available data
-        end_timestamp = latest_timestamp
-        start_timestamp = latest_timestamp - (7 * 24 * 3600)  # 1 week before
-        
-        logger.info(f"Creating progression from {datetime.fromtimestamp(start_timestamp)} to {datetime.fromtimestamp(end_timestamp)}")
-        
-        # Create a unified timeline using both EVault price points and position changes
-        # This ensures we capture both price changes and position changes
-        timeline_points = set()
-        
-        # Add all EVault price timestamps within our range
-        for vault_prices in price_time_series.values():
-            for price_point in vault_prices:
-                if start_timestamp <= price_point['timestamp'] <= end_timestamp:
-                    timeline_points.add(price_point['timestamp'])
-        
-        # Add all position change timestamps within our range
-        for position in position_changes:
-            if start_timestamp <= position['timestamp'] <= end_timestamp:
-                timeline_points.add(position['timestamp'])
-        
-        if not timeline_points:
-            return None, ["No data points available in the selected time range"]
-        
-        # Create the continuous progression data
-        progression_data = []
-        
-        for timestamp in sorted(timeline_points):
-            # Get current position amounts (latest position change before or at this timestamp)
-            current_position = get_position_at_timestamp(position_changes, timestamp)
-            if not current_position:
-                # If no position exists yet, skip this timestamp
-                continue
-            
-            # Get prices at this timestamp (using latest available prices before or at this timestamp)
-            credit_price = get_latest_price_before_timestamp(price_time_series.get(credit_vault, []), timestamp)
-            debt_price = get_latest_price_before_timestamp(price_time_series.get(debt_vault, []), timestamp)
-            underlying_price = get_latest_price_before_timestamp(price_time_series.get(underlying_vault, []), timestamp)
-            
-            # Skip if we don't have prices for all vaults
-            if credit_price == 0 or debt_price == 0 or underlying_price == 0:
-                logger.debug(f"Skipping timestamp {timestamp} due to missing prices: credit={credit_price}, debt={debt_price}, underlying={underlying_price}")
-                continue
-            
-            # Calculate USD values using current position and current prices
-            max_release_usd = current_position['maxRelease'] * credit_price
-            max_repay_usd = current_position['maxRepay'] * debt_price
-            user_collateral_usd = current_position['userCollateral'] * underlying_price
-            
-            progression_data.append({
-                'timestamp': timestamp,
-                'datetime': datetime.fromtimestamp(timestamp),
-                'maxReleaseUsd': max_release_usd,
-                'maxRepayUsd': max_repay_usd,
-                'userCollateralUsd': user_collateral_usd,
-                'maxReleaseTokens': current_position['maxRelease'],
-                'maxRepayTokens': current_position['maxRepay'],
-                'userCollateralTokens': current_position['userCollateral'],
-                'creditPrice': credit_price,
-                'debtPrice': debt_price,
-                'underlyingPrice': underlying_price
-            })
-        
-        if not progression_data:
-            # Provide detailed debugging information
-            debug_info = []
-            debug_info.append(f"Timeline points: {len(timeline_points)}")
-            debug_info.append(f"Position changes: {len(position_changes)}")
-            debug_info.append(f"Price time series vaults: {list(price_time_series.keys())}")
-            
-            for vault_addr, vault_prices in price_time_series.items():
-                debug_info.append(f"Vault {vault_addr}: {len(vault_prices)} price points")
-                if vault_prices:
-                    first_price_time = datetime.fromtimestamp(vault_prices[0]['timestamp'])
-                    last_price_time = datetime.fromtimestamp(vault_prices[-1]['timestamp'])
-                    debug_info.append(f"  Price range: {first_price_time} to {last_price_time}")
-            
-            if position_changes:
-                # Timestamps should now be properly converted integers
-                first_timestamp = position_changes[0]['timestamp']
-                last_timestamp = position_changes[-1]['timestamp']
-                
-                first_pos_time = datetime.fromtimestamp(first_timestamp)
-                last_pos_time = datetime.fromtimestamp(last_timestamp)
-                debug_info.append(f"Position range: {first_pos_time} to {last_pos_time}")
-            
-            debug_info.append(f"Target range: {datetime.fromtimestamp(start_timestamp)} to {datetime.fromtimestamp(end_timestamp)}")
-            
-            return None, [f"No data points could be calculated. Debug info: {'; '.join(debug_info)}"]
-        
-        # Create DataFrame for plotting
-        plot_df = pd.DataFrame(progression_data)
-        
         # Create the plot
         fig = go.Figure()
-        
-        # Add traces for each metric with enhanced hover information
+
+        # Add traces for each metric
         fig.add_trace(go.Scatter(
             x=plot_df['datetime'],
             y=plot_df['maxReleaseUsd'],
-            mode='lines',
+            mode='lines+markers',
             name='Max Release (USD)',
             line=dict(color='#2E8B57', width=2),
+            marker=dict(size=4),
             hovertemplate='<b>Max Release</b><br>' +
                          'Date: %{x}<br>' +
                          'USD Value: $%{y:,.2f}<br>' +
-                         'Tokens: %{customdata[0]:,.4f}<br>' +
-                         'Price: $%{customdata[1]:,.6f}<br>' +
-                         '<extra></extra>',
-            customdata=list(zip(plot_df['maxReleaseTokens'], plot_df['creditPrice']))
+                         '<extra></extra>'
         ))
-        
+
         fig.add_trace(go.Scatter(
             x=plot_df['datetime'],
             y=plot_df['maxRepayUsd'],
-            mode='lines',
+            mode='lines+markers',
             name='Max Repay (USD)',
             line=dict(color='#DC143C', width=2),
+            marker=dict(size=4),
             hovertemplate='<b>Max Repay</b><br>' +
                          'Date: %{x}<br>' +
                          'USD Value: $%{y:,.2f}<br>' +
-                         'Tokens: %{customdata[0]:,.4f}<br>' +
-                         'Price: $%{customdata[1]:,.6f}<br>' +
-                         '<extra></extra>',
-            customdata=list(zip(plot_df['maxRepayTokens'], plot_df['debtPrice']))
+                         '<extra></extra>'
         ))
-        
+
         fig.add_trace(go.Scatter(
             x=plot_df['datetime'],
-            y=plot_df['userCollateralUsd'],
-            mode='lines',
+            y=plot_df['userOwnedCollateralUsd'],
+            mode='lines+markers',
             name='User Collateral (USD)',
             line=dict(color='#4169E1', width=2),
+            marker=dict(size=4),
             hovertemplate='<b>User Collateral</b><br>' +
                          'Date: %{x}<br>' +
                          'USD Value: $%{y:,.2f}<br>' +
-                         'Tokens: %{customdata[0]:,.4f}<br>' +
-                         'Price: $%{customdata[1]:,.6f}<br>' +
-                         '<extra></extra>',
-            customdata=list(zip(plot_df['userCollateralTokens'], plot_df['underlyingPrice']))
+                         '<extra></extra>'
         ))
-        
-        # Add vertical lines at position change timestamps
-        try:
-            position_change_times = []
-            logger.info(f"Processing {len(position_changes)} position changes for vertical lines")
-            
-            for i, pos in enumerate(position_changes):
-                timestamp = pos['timestamp']
-                logger.info(f"Position change {i}: timestamp={timestamp}, type={type(timestamp)}")
-                
-                # Ensure it's a proper integer timestamp
-                if isinstance(timestamp, (int, float)):
-                    change_time = datetime.fromtimestamp(int(timestamp))
-                    position_change_times.append(change_time)
-                    logger.info(f"Converted to datetime: {change_time}")
-                else:
-                    logger.warning(f"Skipping invalid timestamp type: {type(timestamp)}")
-            
-            logger.info(f"Adding {len(position_change_times)} vertical lines to chart")
-            
-            # Only add vertical lines if we have valid timestamps
-            for i, change_time in enumerate(position_change_times):
-                logger.info(f"Adding vline {i}: {change_time} (type: {type(change_time)})")
-                fig.add_vline(
-                    x=change_time,
-                    line_dash="dash",
-                    line_color="rgba(128,128,128,0.5)",
-                    line_width=1,
-                    annotation_text="Position Change",
-                    annotation_position="top"
-                )
-                
-        except Exception as e:
-            logger.error(f"Error adding position change markers: {e}", exc_info=True)
-            # Continue without vertical lines
-        
+
         # Update layout
         fig.update_layout(
             title={
-                'text': 'Continuous USD Value Progression (Position × Asset Prices)',
+                'text': 'Vault Position USD Value Over Time (Pre-priced by API)',
                 'x': 0.5,
                 'xanchor': 'center',
                 'font': {'size': 16, 'color': '#2c3e50'}
@@ -550,129 +382,43 @@ def create_historical_usd_progression(
             ),
             height=500
         )
-        
-        logger.info(f"Created USD progression chart with {len(progression_data)} data points")
+
+        logger.info(f"Created USD progression chart with {len(plot_df)} data points")
         return fig, errors
-        
+
     except Exception as e:
         error_msg = f"Failed to create USD progression chart: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return None, [error_msg]
 
 
-def get_position_at_timestamp(position_changes: List[Dict], target_timestamp: int) -> Optional[Dict]:
-    """
-    Get the current position amounts at a given timestamp.
-    Returns the latest position change that occurred before or at the target timestamp.
-    
-    Args:
-        position_changes: List of position change events sorted by timestamp
-        target_timestamp: Target timestamp to find position for
-        
-    Returns:
-        Position dict with maxRelease, maxRepay, userCollateral, or None if no position found
-    """
-    if not position_changes:
-        return None
-    
-    # Find the latest position change that is not from the future
-    current_position = None
-    for position in position_changes:
-        if position['timestamp'] <= target_timestamp:
-            current_position = position
-        else:
-            break  # Since data is sorted, we can stop here
-    
-    return current_position
-
-
-def get_price_at_timestamp(price_data: List[Dict], target_timestamp: int) -> float:
-    """
-    Get the price at a specific timestamp.
-    For continuous progression, we want the exact price at this timestamp if available,
-    otherwise the latest price before this timestamp.
-    
-    Args:
-        price_data: List of price data points sorted by timestamp
-        target_timestamp: Target timestamp to find price for
-        
-    Returns:
-        Price value, or 0.0 if no suitable price found
-    """
-    if not price_data:
-        return 0.0
-    
-    # First, check for exact timestamp match
-    for price_point in price_data:
-        if price_point['timestamp'] == target_timestamp:
-            return price_point['price']
-    
-    # If no exact match, find the latest price before this timestamp
-    latest_price = 0.0
-    for price_point in price_data:
-        if price_point['timestamp'] <= target_timestamp:
-            latest_price = price_point['price']
-        else:
-            break  # Since data is sorted, we can stop here
-    
-    return latest_price
-
-
-def get_latest_price_before_timestamp(price_data: List[Dict], target_timestamp: int) -> float:
-    """
-    Get the latest price available before or at the target timestamp.
-    This handles the case where EVault data is stored at different intervals than CollateralVault snapshots.
-    
-    Args:
-        price_data: List of price data points sorted by timestamp
-        target_timestamp: Target timestamp to find price for
-        
-    Returns:
-        Price value, or 0.0 if no suitable price found
-    """
-    if not price_data:
-        return 0.0
-    
-    # Find the latest price that is not from the future
-    latest_price = 0.0
-    latest_timestamp = 0
-    
-    for price_point in price_data:
-        if price_point['timestamp'] <= target_timestamp:
-            if price_point['timestamp'] >= latest_timestamp:
-                latest_price = price_point['price']
-                latest_timestamp = price_point['timestamp']
-        else:
-            break  # Since data is sorted, we can stop here
-    
-    return latest_price
-
-
 def format_dataframe_for_table(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
     Format DataFrame for Dash DataTable display.
-    
+    API v1.2: All values are already JSON numbers, scaled and human-readable.
+
     Args:
         df: pandas DataFrame with vault snapshot data
-        
+
     Returns:
         List of dictionaries formatted for DataTable
     """
     if df.empty:
         return []
-    
+
     # Create a copy for formatting
     display_df = df.copy()
-    
-    # Format USD values (convert from wei to dollars)
+
+    # USD values are already floats from the API, no conversion needed
     usd_columns = ['maxReleaseUsd', 'maxRepayUsd', 'totalAssetsDepositedOrReservedUsd', 'userOwnedCollateralUsd']
     for col in usd_columns:
         if col in display_df.columns:
-            display_df[f'{col}_formatted'] = display_df[col] / 1e18
-    
+            display_df[f'{col}_formatted'] = display_df[col]
+
     # Format Twyne LTV as percentage
+    # API v1.2: LTV is already a scaled float (e.g., 0.75 = 75%), just multiply by 100 for percentage
     if 'twyneLiqLtv' in display_df.columns:
-        display_df['twyneLiqLtv_percentage'] = (display_df['twyneLiqLtv'] / 1e4) * 100
+        display_df['twyneLiqLtv_percentage'] = display_df['twyneLiqLtv'] * 100
     
     # Format timestamp for display
     if 'blockTimestamp_datetime' in display_df.columns:
@@ -684,9 +430,9 @@ def format_dataframe_for_table(df: pd.DataFrame) -> List[Dict[str, Any]]:
         formatted_row = {
             'Block Number': int(row['blockNumber']),
             'Block Timestamp': row.get('blockTimestamp_formatted', ''),
-            'Chain ID': row['chainId'],
-            'State': row['state'],
-            'TX Type': row['txType'],
+            'Chain ID': row.get('chainId', 'N/A'),
+            'State': row.get('state', 'N/A'),
+            'TX Type': row.get('txType', 'N/A'),
             'Credit Vault': row['creditVault'],
             'Debt Vault': row['debtVault'],
             'Max Release (USD)': row.get('maxReleaseUsd_formatted', 0.0),
@@ -795,7 +541,7 @@ def layout(vault_address: str = None):
             
             # Data table section
             SectionCard(
-                title="Vault History (Post State Events)",
+                title="Vault History (Transaction Events)",
                 icon="fas fa-history",
                 action_button=dbc.Button(
                     [html.I(className="fas fa-sync-alt me-2"), "Refresh"],
@@ -834,57 +580,163 @@ def layout(vault_address: str = None):
 )
 def update_collateral_vault_detail(n_clicks_refresh, pathname, vault_address):
     """
-    Update the collateral vault detail chart and table with post-state events.
-    
+    Update the collateral vault detail chart and table.
+    Chart uses hourly snapshots, table uses actual transaction events.
+
     Args:
         n_clicks_refresh: Number of times refresh button was clicked
         pathname: Current URL path
         vault_address: Vault address from store
-        
+
     Returns:
         Tuple of (chart_status, chart_component, table_status, table_component, last_updated_text)
     """
     if not vault_address or not pathname.startswith("/collateralVaults/"):
         return "", "", "", "", ""
-    
-    logger.info(f"Loading vault history for {vault_address}")
-    
-    # Fetch all historical data
-    data = run_async(fetch_vault_history_data(vault_address))
-    
-    # Check for errors
-    if data["error"]:
+
+    logger.info(f"Loading vault data for {vault_address}")
+
+    # Fetch both chart data (hourly snapshots) and history events (actual transactions)
+    chart_data = run_async(fetch_vault_chart_data(vault_address, days=1))
+    history_data = run_async(fetch_vault_history_events(vault_address))
+
+    # Check for errors in chart data
+    chart_component = ""
+    chart_status = ""
+
+    if chart_data["error"]:
+        chart_status = ErrorAlert(
+            message=f"Failed to fetch chart data: {chart_data['error']}",
+            title="Chart Error"
+        )
+        chart_component = ""
+
+    # Check for errors in history data
+    if history_data["error"]:
         error_status = ErrorAlert(
-            message=f"Failed to fetch data: {data['error']}",
+            message=f"Failed to fetch history data: {history_data['error']}",
             title="API Error"
         )
         error_table = ErrorState(
             error_message="Unable to load history data due to API error",
             retry_callback="collateral-vault-detail-refresh"
         )
-        return error_status, "", error_status, error_table, ""
+        return chart_status, chart_component, error_status, error_table, ""
+
+    # Create USD progression chart using hourly snapshots from chart_data
+    if not chart_data["error"] and chart_data["snapshots"]:
+
+        snapshots = chart_data["snapshots"]
+        data = []
+        for snapshot in snapshots:
+            # API v1.2: All numeric values are already JSON numbers (floats/ints), pre-scaled
+            # Token amounts, USD values, and LTV are all human-readable numbers
+            row = {
+                'chainId': str(snapshot.chainId) if snapshot.chainId else 'N/A',
+                'vaultAddress': str(snapshot.vaultAddress),
+                'underlyingCollateralVault': str(snapshot.underlyingCollateralVault),
+                'creditVault': str(snapshot.creditVault),
+                'debtVault': str(snapshot.debtVault),
+                # Token amounts - already floats from API
+                'maxRelease': safe_convert_to_float_from_string(snapshot.maxRelease),
+                'maxRepay': safe_convert_to_float_from_string(snapshot.maxRepay),
+                'totalAssetsDepositedOrReserved': safe_convert_to_float_from_string(snapshot.totalAssetsDepositedOrReserved),
+                'userOwnedCollateral': safe_convert_to_float_from_string(snapshot.userOwnedCollateral),
+                # LTV - already float from API (e.g., 0.75 = 75%)
+                'twyneLiqLtv': safe_convert_to_float_from_string(snapshot.twyneLiqLtv),
+                'canLiquidate': bool(snapshot.canLiquidate),
+                'isExternallyLiquidated': bool(snapshot.isExternallyLiquidated),
+                # USD values - already floats from API
+                'maxReleaseUsd': safe_convert_to_float(snapshot.maxReleaseUsd),
+                'maxRepayUsd': safe_convert_to_float(snapshot.maxRepayUsd),
+                'totalAssetsDepositedOrReservedUsd': safe_convert_to_float(snapshot.totalAssetsDepositedOrReservedUsd),
+                'userOwnedCollateralUsd': safe_convert_to_float(snapshot.userOwnedCollateralUsd),
+                # Block info - already integers from API
+                'blockNumber': snapshot.creditVaultPriceBlock,
+                'blockTimestamp': snapshot.creditVaultPriceTimestamp,
+                'logIndex': snapshot.logIndex,
+                # State info
+                'state': str(snapshot.state) if snapshot.state else 'post',  # Default to 'post' as snapshots endpoint only returns post-state
+                'txType': str(snapshot.txType) if snapshot.txType else 'N/A'
+            }
+            data.append(row)
+
+        # Create DataFrame
+        df_snapshots = pd.DataFrame(data)
+        df_snapshots = df_snapshots[df_snapshots['state'] == 'post'].copy()
+        df_snapshots['datetime'] = pd.to_datetime(df_snapshots['blockTimestamp'], unit='s')
+        for column in df_snapshots.columns:
+            print(f"Column: {column}: {df_snapshots.iloc[0][column]} || {df_snapshots.iloc[2][column]}")
+
+
+        # Create the USD progression chart (no EVault data needed)
+        fig, chart_errors = create_usd_progression_from_priced_snapshots(df_snapshots)
+
+        if fig is None:
+            chart_status = dbc.Alert(
+                f"Chart creation failed: {'; '.join(chart_errors) if chart_errors else 'Unknown error'}",
+                color="warning"
+            )
+            chart_component = html.Div([
+                html.P("Unable to create USD progression chart", className="text-muted text-center p-4")
+            ])
+        else:
+            chart_status = dbc.Alert(
+                f"USD progression chart loaded from {len(df_snapshots)} hourly snapshots ({chart_data.get('days', 1)}-day view)",
+                color="success",
+                dismissable=True,
+                duration=4000
+            )
+            if chart_errors:
+                chart_status = html.Div([
+                    chart_status,
+                    dbc.Alert(
+                        f"Warnings: {'; '.join(chart_errors[:3])}{'...' if len(chart_errors) > 3 else ''}",
+                        color="warning",
+                        dismissable=True
+                    )
+                ])
+
+            chart_component = dcc.Graph(
+                figure=fig,
+                config={
+                    'displayModeBar': True,
+                    'displaylogo': False,
+                    'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d']
+                }
+            )
+    else:
+        if not chart_status:  # Only set if not already set by error
+            chart_status = dbc.Alert(
+                "No snapshots available for chart creation",
+                color="warning"
+            )
+        if not chart_component:  # Only set if not already set
+            chart_component = html.Div([
+                html.P("No snapshot data available for chart", className="text-muted text-center p-4")
+            ])
+
     
-    # Convert to DataFrame
-    df = create_dataframe_from_snapshots(data["snapshots"])
-    
-    if df.empty:
+    # Convert history events to DataFrame for the table
+    df_history = create_dataframe_from_snapshots(history_data["snapshots"])
+
+    if df_history.empty:
         warning_status = dbc.Alert(
-            "No historical data available for this vault", 
+            "No transaction history available for this vault",
             color="warning"
         )
         empty_table = html.Div([
             html.H5("Vault History", className="mb-3"),
-            html.P("No history data available", className="text-muted text-center p-4")
+            html.P("No transaction history available", className="text-muted text-center p-4")
         ])
         last_updated = f"Updated: {datetime.now().strftime('%H:%M:%S')}"
-        return warning_status, "", warning_status, empty_table, last_updated
-    
-    # Filter for only "post" state events
-    post_df = df[df['state'] == 'post'].copy()
-    
-    if post_df.empty:
+        return chart_status, chart_component, warning_status, empty_table, last_updated
+
+    df_history['datetime'] = pd.to_datetime(df_history['blockTimestamp'], unit='s')
+
+    if df_history.empty:
         warning_status = dbc.Alert(
-            f"Loaded {len(df)} total events, but no 'post' state events found", 
+            f"Loaded {len(df_history)} total events",
             color="warning"
         )
         empty_table = html.Div([
@@ -892,114 +744,25 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, vault_address):
             html.P("No 'post' state events available", className="text-muted text-center p-4")
         ])
         last_updated = f"Updated: {datetime.now().strftime('%H:%M:%S')}"
-        return warning_status, "", warning_status, empty_table, last_updated
-    
-    # Sort by block number descending (most recent first)
-    post_df = post_df.sort_values('blockNumber', ascending=False)
-    
-    # Get vault addresses for EVault data fetching
-    unique_vaults = set()
-    if not post_df.empty:
-        credit_vault = post_df['creditVault'].iloc[0]
-        debt_vault = post_df['debtVault'].iloc[0]
-        underlying_vault = post_df['underlyingCollateralVault'].iloc[0]
-        unique_vaults = {credit_vault, debt_vault, underlying_vault}
-    
-    # Determine time range for EVault data
-    # Use a broader range to ensure we have sufficient price data
-    if not post_df.empty:
-        # Values should now be properly converted integers from the DataFrame
-        latest_timestamp = int(post_df['blockTimestamp'].max())
-        earliest_timestamp = int(post_df['blockTimestamp'].min())
-    else:
-        latest_timestamp = int(datetime.now().timestamp())
-        earliest_timestamp = latest_timestamp - (7 * 24 * 3600)
-    
-    # Extend the range to ensure we have price data before the first position
-    buffer_time = 14 * 24 * 3600  # 2 weeks buffer for price data
-    evault_start_time = earliest_timestamp - buffer_time
-    evault_end_time = latest_timestamp + (24 * 3600)  # 1 day after for safety
-    
-    # Fetch EVault historical data for the vault addresses
-    chart_component = ""
-    chart_status = ""
-    
-    if unique_vaults:
-        logger.info(f"Fetching EVault data for vaults: {unique_vaults}")
-        evault_data = run_async(fetch_evault_historical_data(
-            list(unique_vaults),
-            start_time=evault_start_time,
-            end_time=evault_end_time
-        ))
-        
-        if evault_data["error"]:
-            chart_status = dbc.Alert(
-                f"Chart unavailable: {evault_data['error']}", 
-                color="warning"
-            )
-            chart_component = html.Div([
-                html.P("Unable to load historical price data for chart", className="text-muted text-center p-4")
-            ])
-        else:
-            # Create the USD progression chart
-            fig, chart_errors = create_historical_usd_progression(post_df, evault_data["metrics"])
-            
-            if fig is None:
-                chart_status = dbc.Alert(
-                    f"Chart creation failed: {'; '.join(chart_errors) if chart_errors else 'Unknown error'}", 
-                    color="warning"
-                )
-                chart_component = html.Div([
-                    html.P("Unable to create USD progression chart", className="text-muted text-center p-4")
-                ])
-            else:
-                chart_status = dbc.Alert(
-                    f"Chart created with {evault_data['vault_count']} EVault price sources", 
-                    color="success",
-                    dismissable=True,
-                    duration=4000
-                )
-                if chart_errors:
-                    chart_status = html.Div([
-                        chart_status,
-                        dbc.Alert(
-                            f"Warnings: {'; '.join(chart_errors[:3])}{'...' if len(chart_errors) > 3 else ''}", 
-                            color="warning",
-                            dismissable=True
-                        )
-                    ])
-                
-                chart_component = dcc.Graph(
-                    figure=fig,
-                    config={
-                        'displayModeBar': True,
-                        'displaylogo': False,
-                        'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d']
-                    }
-                )
-    else:
-        chart_status = dbc.Alert(
-            "No vault addresses available for chart creation", 
-            color="warning"
-        )
-        chart_component = html.Div([
-            html.P("No vault data available for chart", className="text-muted text-center p-4")
-        ])
+        return chart_status, chart_component, warning_status, empty_table, last_updated
+
+    # Sort by block number descending (most recent first) for table display
+    df_history = df_history.sort_values('blockNumber', ascending=False)
     
     # Create table status message
     table_status = dbc.Alert(
-        f"Loaded {len(post_df)} 'post' state events out of {len(df)} total events", 
+        f"Loaded {len(df_history)} transaction events",
         color="success",
         dismissable=True,
         duration=4000
     )
-    
-    # Format data for table
-    table_data = format_dataframe_for_table(post_df)
+
+    # Format data for table (using post_df - actual transaction events)
+    table_data = format_dataframe_for_table(df_history)
     
     # Create table component
     table_component = html.Div([
-        html.H5("Vault History (Post State Events)", className="mb-3"),
+        html.H5("Vault History (Transaction Events)", className="mb-3"),
         dash_table.DataTable(
             id="collateral-vault-history-table",
             data=table_data,
@@ -1054,8 +817,8 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, vault_address):
             export_headers="display"
         )
     ])
-    
+
     # Last updated timestamp
-    last_updated = f"Showing {len(post_df)} post-state events - Updated: {datetime.now().strftime('%H:%M:%S')}"
-    
+    last_updated = f"Showing {len(df_history)} transaction events - Updated: {datetime.now().strftime('%H:%M:%S')}"
+
     return chart_status, chart_component, table_status, table_component, last_updated

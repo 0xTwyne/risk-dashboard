@@ -100,14 +100,14 @@ class EVaultDataCache:
             # Create comprehensive data dictionary
             evault_data = {}
             for metric in metrics:
-                vault_address = getattr(metric, 'vaultAddress', None)
+                vault_address = getattr(metric, 'vault_address', None)
                 if vault_address:
                     evault_data[vault_address] = {
                         'metric': metric,
                         'price': price_lookup.get(vault_address, 0.0),
                         'symbol': getattr(metric, 'symbol', 'UNKNOWN'),
                         'name': getattr(metric, 'name', 'Unknown Token'),
-                        'decimals': getattr(metric, 'decimals', '18')
+                        'decimals': getattr(metric, 'decimals', 18)
                     }
             
             # Update cache

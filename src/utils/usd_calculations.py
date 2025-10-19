@@ -162,7 +162,7 @@ def format_enhanced_snapshot_for_table(enhanced_snapshot: Dict[str, Any], symbol
     ).strftime("%Y-%m-%d %H:%M:%S")
     
     # Format Twyne LTV as percentage
-    twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
+    twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) if snapshot.twyneLiqLtv != "0" else 0.0
     twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
     
     # Get symbols or use full addresses (for copying)
@@ -226,26 +226,145 @@ def _get_zero_usd_values() -> Dict[str, float]:
     }
 
 
+def format_snapshot_for_table(snapshot: Any, symbol_mapping: Dict[str, str] = None) -> Dict[str, Any]:
+    """
+    Format a pre-priced snapshot from the API for table display.
+    The snapshot already contains USD values calculated by the API.
+
+    Args:
+        snapshot: CollateralVaultSnapshot object with pre-calculated USD values
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
+
+    Returns:
+        Dictionary formatted for DataTable display
+    """
+    if symbol_mapping is None:
+        symbol_mapping = {}
+
+    # Get basic snapshot data
+    vault_address = snapshot.vaultAddress
+    credit_vault_address = snapshot.creditVault
+    debt_vault_address = snapshot.debtVault
+
+    # Format timestamp
+    from datetime import datetime
+    block_timestamp = datetime.fromtimestamp(
+        int(snapshot.blockTimestamp)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Format Twyne LTV as percentage
+    twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) if snapshot.twyneLiqLtv != "0" else 0.0
+    twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
+
+    # Get symbols or use full addresses (for copying)
+    credit_vault_display = symbol_mapping.get(credit_vault_address.lower(), credit_vault_address)
+    debt_vault_display = symbol_mapping.get(debt_vault_address.lower(), debt_vault_address)
+
+    # Use pre-calculated USD values from API (already as floats from the API)
+    max_release_usd = snapshot.maxReleaseUsd if snapshot.maxReleaseUsd else 0.0
+    max_repay_usd = snapshot.maxRepayUsd if snapshot.maxRepayUsd else 0.0
+    total_assets_usd = snapshot.totalAssetsDepositedOrReservedUsd if snapshot.totalAssetsDepositedOrReservedUsd else 0.0
+    user_collateral_usd = snapshot.userOwnedCollateralUsd if snapshot.userOwnedCollateralUsd else 0.0
+
+    # Create table row with API-provided USD values
+    row = {
+        "Chain ID": snapshot.chainId if snapshot.chainId else "N/A",
+        "Vault Address": vault_address,  # Store full address for copying
+        "Credit Vault": credit_vault_display,
+        "Debt Vault": debt_vault_display,
+        "Max Release (USD)": max_release_usd,
+        "Max Repay (USD)": max_repay_usd,
+        "Total Assets (USD)": total_assets_usd,
+        "User Collateral (USD)": user_collateral_usd,
+        "Twyne Liq LTV (%)": twyne_liq_ltv_percentage,
+        "Can Liquidate": "Yes" if snapshot.canLiquidate else "No",
+        "Externally Liquidated": "Yes" if snapshot.isExternallyLiquidated else "No",
+        "Block Number": int(snapshot.blockNumber),
+        "Block Timestamp": block_timestamp,
+        "Actions": f"[More](/collateralVaults/{vault_address})"
+    }
+
+    return row
+
+
+def format_snapshots_for_table(
+    snapshots: List[Any],
+    symbol_mapping: Dict[str, str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Format multiple pre-priced snapshots for table display.
+
+    Args:
+        snapshots: List of CollateralVaultSnapshot objects with pre-calculated USD values
+        symbol_mapping: Dict mapping vault addresses to symbols (optional)
+
+    Returns:
+        List of dictionaries formatted for DataTable
+    """
+    return [
+        format_snapshot_for_table(snapshot, symbol_mapping)
+        for snapshot in snapshots
+    ]
+
+
+def convert_priced_snapshots_to_enhanced(snapshots: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Convert pre-priced snapshots from API to enhanced format for compatibility with charts.
+    This is a compatibility layer to work with existing chart functions that expect
+    enhanced snapshots with calculated_usd_values.
+
+    Args:
+        snapshots: List of CollateralVaultSnapshot objects with pre-calculated USD values
+
+    Returns:
+        List of enhanced snapshot dictionaries
+    """
+    enhanced_snapshots = []
+
+    for snapshot in snapshots:
+        # Extract USD values from the snapshot (already calculated by API as floats)
+        usd_values = {
+            'max_release_usd': snapshot.maxReleaseUsd if snapshot.maxReleaseUsd else 0.0,
+            'max_repay_usd': snapshot.maxRepayUsd if snapshot.maxRepayUsd else 0.0,
+            'total_assets_usd': snapshot.totalAssetsDepositedOrReservedUsd if snapshot.totalAssetsDepositedOrReservedUsd else 0.0,
+            'user_collateral_usd': snapshot.userOwnedCollateralUsd if snapshot.userOwnedCollateralUsd else 0.0,
+        }
+
+        # Create enhanced snapshot in the format expected by chart functions
+        enhanced_snapshot = {
+            'original_snapshot': snapshot,
+            'calculated_usd_values': usd_values,
+            'vault_address': snapshot.vaultAddress,
+            'credit_vault': snapshot.creditVault,
+            'debt_vault': snapshot.debtVault,
+            'has_pricing_errors': False  # API pre-pricing doesn't generate errors locally
+        }
+
+        enhanced_snapshots.append(enhanced_snapshot)
+
+    return enhanced_snapshots
+
+
 def get_pricing_warnings_summary(warning_messages: List[str]) -> Optional[str]:
     """
     Create a summary of pricing warnings for display.
-    
+
     Args:
         warning_messages: List of warning messages
-        
+
     Returns:
         Summary string or None if no warnings
     """
     if not warning_messages:
         return None
-    
+
     # Count different types of warnings
     missing_vaults = [msg for msg in warning_messages if "not found in EVault data" in msg]
     zero_prices = [msg for msg in warning_messages if "zero price" in msg]
     other_errors = [msg for msg in warning_messages if msg not in missing_vaults and msg not in zero_prices]
-    
+
     summary_parts = []
-    
+
     if missing_vaults:
         summary_parts.append(f"{len(missing_vaults)} missing vault(s)")
     

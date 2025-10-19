@@ -168,7 +168,7 @@ def _get_vault_symbol_mapping_impl() -> Dict[str, str]:
         # Create mapping of address -> symbol (case-insensitive)
         symbol_mapping = {}
         for metric in evaults_data.get("metrics", []):
-            vault_address = metric.vaultAddress.lower()
+            vault_address = metric.vault_address.lower()
             symbol = metric.symbol
             symbol_mapping[vault_address] = symbol
         

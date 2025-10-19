@@ -162,8 +162,8 @@ async def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float
                 metrics = getattr(response, 'metrics', []) or []
                 if metrics:
                     latest_metric = metrics[0]
-                    metric_block = int(latest_metric.blockNumber)
-                    
+                    metric_block = int(latest_metric.block_number)
+
                     if metric_block <= target_block:
                         logger.debug(f"Found metric for vault {vault_address} at block {metric_block}")
                         return latest_metric, vault_errors
@@ -189,7 +189,7 @@ async def get_evault_prices_at_block(target_block: int) -> Tuple[Dict[str, float
             error_messages.extend(vault_errors)
             if metric:
                 all_historical_metrics.append(metric)
-                blocks_found.add(int(metric.blockNumber))
+                blocks_found.add(int(metric.block_number))
         
         if not all_historical_metrics:
             error_msg = f"No historical EVault metrics found for any vault at or before block {target_block}"
@@ -484,7 +484,7 @@ def format_block_snapshot_for_table(block_snapshot: BlockSnapshot) -> List[Dict[
         ).strftime("%Y-%m-%d %H:%M:%S")
         
         # Format Twyne LTV as percentage
-        twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) / 1e4 if snapshot.twyneLiqLtv != "0" else 0.0
+        twyne_liq_ltv_decimal = float(snapshot.twyneLiqLtv) if snapshot.twyneLiqLtv != "0" else 0.0
         twyne_liq_ltv_percentage = twyne_liq_ltv_decimal * 100
         
         row = {

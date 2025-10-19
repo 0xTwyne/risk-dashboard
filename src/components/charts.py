@@ -30,23 +30,24 @@ def aggregate_metrics_to_hourly_intervals(metrics: List) -> List:
         return []
     
     # Sort metrics by timestamp
-    sorted_metrics = sorted(metrics, key=lambda x: int(x.blockTimestamp))
-    
+    sorted_metrics = sorted(metrics, key=lambda x: x.block_timestamp)
+
     # Group metrics by hour
     hourly_groups = defaultdict(list)
-    
+
     for metric in sorted_metrics:
-        timestamp = datetime.fromtimestamp(int(metric.blockTimestamp))
+        # API v1.2: block_timestamp is already an integer
+        timestamp = datetime.fromtimestamp(metric.block_timestamp)
         # Round down to the nearest hour
         hour_key = timestamp.replace(minute=0, second=0, microsecond=0)
         hourly_groups[hour_key].append(metric)
-    
+
     # Take the latest metric from each hour
     aggregated_metrics = []
     for hour_key in sorted(hourly_groups.keys()):
         # Get the latest metric in this hour (highest timestamp)
         hour_metrics = hourly_groups[hour_key]
-        latest_metric = max(hour_metrics, key=lambda x: int(x.blockTimestamp))
+        latest_metric = max(hour_metrics, key=lambda x: x.block_timestamp)
         aggregated_metrics.append(latest_metric)
     
     logger.info(f"Aggregated {len(sorted_metrics)} metrics into {len(aggregated_metrics)} hourly intervals")
@@ -539,18 +540,15 @@ def create_multi_vault_utilization_chart(
         utilization_rates = []
         
         for metric in aggregated_metrics:
-            # Get decimals for proper scaling
-            decimals = int(metric.decimals) if hasattr(metric, 'decimals') and metric.decimals != "0" else 18
-            scaling_factor = 10 ** decimals
-            
-            # Scale totalAssets and totalBorrows using decimals
-            total_assets = float(metric.totalAssets) / scaling_factor if metric.totalAssets != "0" else 0.0
-            total_borrows = float(metric.totalBorrows) / scaling_factor if metric.totalBorrows != "0" else 0.0
-            
+            # API v1.2: totalAssets and totalBorrows are already floats (human-readable numbers)
+            total_assets = metric.total_assets if metric.total_assets != 0 else 0.0
+            total_borrows = metric.total_borrows if metric.total_borrows != 0 else 0.0
+
             # Calculate utilization rate
             utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
-            
-            timestamps.append(datetime.fromtimestamp(int(metric.blockTimestamp)))
+
+            # API v1.2: block_timestamp is already an integer
+            timestamps.append(datetime.fromtimestamp(metric.block_timestamp))
             utilization_rates.append(utilization_rate)
         
         if not timestamps:
@@ -677,38 +675,30 @@ def create_evault_asset_prices_chart(
         
         try:
             # Convert metrics to pandas DataFrame for efficient calculations
+            # API v1.2: All numeric values are JSON numbers (floats/ints), human-readable
             df_data = []
             for metric in metrics:
                 df_data.append({
-                    'blockTimestamp': int(metric.blockTimestamp),
-                    'totalAssets': float(metric.totalAssets) if metric.totalAssets != "0" else 0.0,
-                    'totalAssetsUsd': float(metric.totalAssetsUsd) if metric.totalAssetsUsd != "0" else 0.0,
-                    'decimals': int(metric.decimals) if metric.decimals != "0" else 18
+                    'blockTimestamp': metric.block_timestamp,  # Already an integer
+                    'totalAssets': metric.total_assets if metric.total_assets != 0 else 0.0,  # Already a float
+                    'totalAssetsUsd': metric.total_assets_usd,  # Already a float from API
                 })
-            
+
             if not df_data:
                 continue
-                
+
             df = pd.DataFrame(df_data)
-            
+            df['totalAssets'] = df['totalAssets'].astype(float)
+            df['totalAssetsUsd'] = df['totalAssetsUsd'].astype(float)
+
             # Convert timestamp to datetime
             df['datetime'] = pd.to_datetime(df['blockTimestamp'], unit='s')
-            
-            # Scale totalAssets using decimals (vectorized operation)
-            df['scaling_factor'] = 10 ** df['decimals']
-            df['total_assets_scaled'] = df['totalAssets'] / df['scaling_factor']
-            
-            # Scale USD values if they are very large (vectorized operation)
-            df['total_assets_usd_scaled'] = np.where(
-                df['totalAssetsUsd'] > 1e12,
-                df['totalAssetsUsd'] / 1e18,
-                df['totalAssetsUsd']
-            )
-            
+
             # Calculate price per token (vectorized operation)
+            # API v1.2: No scaling needed, values are already human-readable
             df['price'] = np.where(
-                (df['total_assets_scaled'] > 0) & (df['total_assets_usd_scaled'] > 0),
-                df['total_assets_usd_scaled'] / df['total_assets_scaled'],
+                (df['totalAssets'] > 0) & (df['totalAssetsUsd'] > 0),
+                df['totalAssetsUsd'] / df['totalAssets'],
                 0.0
             )
             

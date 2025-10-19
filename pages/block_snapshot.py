@@ -98,6 +98,57 @@ def layout():
     )
 
 
+async def fetch_snapshots_at_block(block_number: int) -> Dict[str, Any]:
+    """
+    Fetch snapshot aggregates at a specific block using the API.
+
+    Args:
+        block_number: Block number to fetch snapshots for
+
+    Returns:
+        Dict with snapshot aggregates and metadata
+    """
+    from src.api import api_client
+
+    try:
+        response = await api_client.get_collateral_vaults_snapshots(
+            limit=100,
+            block_number=block_number
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            return {"success": False, "error": response["error"]}
+
+        # Get aggregates from response
+        aggregates = response.aggregates or {}
+
+        # Get block timestamp from first snapshot if available
+        block_timestamp = None
+        if response.snapshots:
+            block_timestamp = int(response.snapshots[0].blockTimestamp)
+
+        # Convert snapshot_block to int safely
+        try:
+            snapshot_block_int = int(response.snapshotBlock) if response.snapshotBlock else block_number
+        except (ValueError, TypeError):
+            snapshot_block_int = block_number
+
+        return {
+            "success": True,
+            "block_number": block_number,
+            "block_timestamp": block_timestamp,
+            "snapshot_block": snapshot_block_int,
+            "successful_snapshots": aggregates.get("uniqueVaults", 0),
+            "total_assets_usd": aggregates.get("totalAssetsDepositedOrReservedUsd", 0.0),
+            "total_user_collateral_usd": aggregates.get("totalUserOwnedCollateralUsd", 0.0),
+            "total_max_release_usd": aggregates.get("totalMaxReleaseUsd", 0.0),
+            "total_max_repay_usd": aggregates.get("totalMaxRepayUsd", 0.0),
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch snapshots at block {block_number}: {e}")
+        return {"success": False, "error": str(e)}
+
+
 @callback(
     Output("comparison-results", "children"),
     [Input("compare-blocks-btn", "n_clicks")],
@@ -106,37 +157,67 @@ def layout():
     prevent_initial_call=True
 )
 def compare_blocks(n_clicks, block1, block2):
-    """Compare two blocks."""
+    """Compare two blocks by fetching pre-priced snapshots from API."""
     if not block1 or not block2:
         return dbc.Alert("Please enter both block numbers", color="warning")
-    
+
     if block1 == block2:
         return dbc.Alert("Please enter different block numbers", color="warning")
-    
+
     try:
-        logger.info(f"Comparing blocks {block1} and {block2}")
-        
-        # Show loading while fetching
-        comparison = run_async(block_snapshot_client.compare_blocks(block1, block2))
-        
-        if not comparison['success']:
+        logger.info(f"Comparing blocks {block1} and {block2} using API snapshots...")
+
+        # Fetch snapshots for both blocks from API
+        summary1 = run_async(fetch_snapshots_at_block(block1))
+        summary2 = run_async(fetch_snapshots_at_block(block2))
+
+        if not summary1.get('success'):
             return dbc.Alert(
-                f"Comparison failed: {comparison.get('error', 'Unknown error')}", 
+                f"Failed to fetch data for block {block1}: {summary1.get('error', 'Unknown error')}",
                 color="danger"
             )
-        
-        summary1 = comparison['snapshot1']
-        summary2 = comparison['snapshot2']
-        differences = comparison['differences']
+
+        if not summary2.get('success'):
+            return dbc.Alert(
+                f"Failed to fetch data for block {block2}: {summary2.get('error', 'Unknown error')}",
+                color="danger"
+            )
+
+        # Calculate differences
+        differences = {
+            'vault_count_change': summary2['successful_snapshots'] - summary1['successful_snapshots'],
+            'total_assets_change_usd': summary2['total_assets_usd'] - summary1['total_assets_usd'],
+            'total_collateral_change_usd': summary2['total_user_collateral_usd'] - summary1['total_user_collateral_usd'],
+            'total_credit_change_usd': summary2['total_max_release_usd'] - summary1['total_max_release_usd'],
+            'total_debt_change_usd': summary2['total_max_repay_usd'] - summary1['total_max_repay_usd'],
+        }
+
+        # Calculate percentage changes
+        differences['percentage_assets_change'] = (
+            (differences['total_assets_change_usd'] / summary1['total_assets_usd'] * 100)
+            if summary1['total_assets_usd'] > 0 else 0.0
+        )
+        differences['percentage_collateral_change'] = (
+            (differences['total_collateral_change_usd'] / summary1['total_user_collateral_usd'] * 100)
+            if summary1['total_user_collateral_usd'] > 0 else 0.0
+        )
+        differences['percentage_credit_change'] = (
+            (differences['total_credit_change_usd'] / summary1['total_max_release_usd'] * 100)
+            if summary1['total_max_release_usd'] > 0 else 0.0
+        )
+        differences['percentage_debt_change'] = (
+            (differences['total_debt_change_usd'] / summary1['total_max_repay_usd'] * 100)
+            if summary1['total_max_repay_usd'] > 0 else 0.0
+        )
         
         # Format timestamp if available
         timestamp1 = ""
-        if summary1.get('formatted_timestamp'):
-            timestamp1 = f" ({summary1['formatted_timestamp']})"
-        
+        if summary1.get('block_timestamp'):
+            timestamp1 = f" ({datetime.fromtimestamp(summary1['block_timestamp']).strftime('%Y-%m-%d %H:%M:%S')})"
+
         timestamp2 = ""
-        if summary2.get('formatted_timestamp'):
-            timestamp2 = f" ({summary2['formatted_timestamp']})"
+        if summary2.get('block_timestamp'):
+            timestamp2 = f" ({datetime.fromtimestamp(summary2['block_timestamp']).strftime('%Y-%m-%d %H:%M:%S')})"
         
         return dbc.Card([
             dbc.CardHeader([

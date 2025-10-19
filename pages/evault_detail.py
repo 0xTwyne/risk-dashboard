@@ -103,18 +103,20 @@ def create_utilization_chart(metrics: List) -> go.Figure:
         )
     
     # Sort metrics by timestamp
-    sorted_metrics = sorted(metrics, key=lambda x: int(x.blockTimestamp))
-    
+    sorted_metrics = sorted(metrics, key=lambda x: int(x.block_timestamp))
+
     # Calculate utilization rates and prepare data
     timestamps = []
     utilization_rates = []
-    
+
     for metric in sorted_metrics:
-        total_assets = float(metric.totalAssets) if metric.totalAssets != "0" else 0.0
-        total_borrows = float(metric.totalBorrows) if metric.totalBorrows != "0" else 0.0
+        # API v1.2: All numeric values are already floats/ints, pre-scaled
+        total_assets = metric.total_assets if metric.total_assets != 0 else 0.0
+        total_borrows = metric.total_borrows if metric.total_borrows != 0 else 0.0
         utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
-        
-        timestamps.append(datetime.fromtimestamp(int(metric.blockTimestamp)))
+
+        # block_timestamp is already an integer
+        timestamps.append(datetime.fromtimestamp(metric.block_timestamp))
         utilization_rates.append(utilization_rate)
     
     # Create the line chart
@@ -349,26 +351,23 @@ def update_vault_detail(n_clicks_refresh, pathname, n_clicks_apply, vault_addres
         
         # Calculate current metrics from latest data point
         if data["metrics"]:
-            latest_metric = max(data["metrics"], key=lambda x: int(x.blockTimestamp))
-            
-            # Get decimals for proper scaling
-            decimals = int(latest_metric.decimals) if hasattr(latest_metric, 'decimals') and latest_metric.decimals != "0" else 18
-            scaling_factor = 10 ** decimals
-            
-            # Scale totalAssets and totalBorrows using decimals
-            total_assets = float(latest_metric.totalAssets) / scaling_factor if latest_metric.totalAssets != "0" else 0.0
-            total_borrows = float(latest_metric.totalBorrows) / scaling_factor if latest_metric.totalBorrows != "0" else 0.0
+            # block_timestamp is already an integer from API
+            latest_metric = max(data["metrics"], key=lambda x: x.block_timestamp)
+
+            # API v1.2: All numeric values are already floats/ints, pre-scaled and human-readable
+            # No decimal scaling needed - values arrive ready to use
+
+            # Total assets and borrows are already floats, scaled by token decimals
+            total_assets = latest_metric.total_assets if latest_metric.total_assets != 0 else 0.0
+            total_borrows = latest_metric.total_borrows if latest_metric.total_borrows != 0 else 0.0
             current_utilization = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
-            
-            # Scale USD values by 1e18 if needed
-            total_assets_usd_raw = float(latest_metric.totalAssetsUsd) if latest_metric.totalAssetsUsd != "0" else 0.0
-            total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
-            
-            total_borrows_usd_raw = float(latest_metric.totalBorrowsUsd) if hasattr(latest_metric, 'totalBorrowsUsd') and latest_metric.totalBorrowsUsd != "0" else 0.0
-            total_borrows_usd = total_borrows_usd_raw / 1e18 if total_borrows_usd_raw > 1e12 else total_borrows_usd_raw
-            
-            # Format interest rate as percentage
-            interest_rate = float(latest_metric.interestRate) / 1e18 * 100 if hasattr(latest_metric, 'interestRate') and latest_metric.interestRate != "0" else 0.0
+
+            # USD values are already human-readable floats from API
+            total_assets_usd = latest_metric.total_assets_usd if latest_metric.total_assets_usd != 0 else 0.0
+            total_borrows_usd = latest_metric.total_borrows_usd if hasattr(latest_metric, 'total_borrows_usd') and latest_metric.total_borrows_usd != 0 else 0.0
+
+            # Interest rate is already scaled (e.g., 0.05 = 5%), just multiply by 100 for percentage
+            interest_rate = latest_metric.interest_rate * 100 if hasattr(latest_metric, 'interest_rate') and latest_metric.interest_rate != 0 else 0.0
             
             # Create current metrics cards
             metrics_cards = dbc.Row([

@@ -17,10 +17,8 @@ from .cards import MetricCard
 from .layouts import SectionCard, LoadingSpinner, ErrorAlert
 from .loading import LoadingState, ErrorState
 from src.utils.usd_calculations import (
-    calculate_multiple_snapshots_usd_values,
-    get_summary_metrics_from_snapshots,
-    format_enhanced_snapshots_for_table,
-    get_pricing_warnings_summary
+    format_snapshots_for_table,
+    convert_priced_snapshots_to_enhanced
 )
 from src.utils.health_factor import (
     calculate_health_factors_for_snapshots,
@@ -87,14 +85,15 @@ def run_async(coro):
 async def fetch_collateral_vault_data() -> Dict[str, Any]:
     """
     Fetch collateral vault snapshots with caching at the processed data level.
-    
+    Snapshots are already priced by the API, no need for local USD calculations.
+
     Returns:
         Dict containing metrics or error information
     """
     try:
         # Check for cached data first
         from src.utils.cached_data import get_cached_collateral_vault_data, cache_collateral_vault_data
-        
+
         cached_data = get_cached_collateral_vault_data()
         if cached_data:
             # Add cache metadata
@@ -103,12 +102,12 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
             cached_data["from_cache"] = True
             logger.info(f"Using cached collateral vault data (age: {cache_age:.1f}s)")
             return cached_data
-        
-        logger.info("Fetching fresh collateral vaults snapshots...")
-        
-        # Fetch data using the API client
+
+        logger.info("Fetching fresh collateral vaults snapshots with pre-calculated USD values...")
+
+        # Fetch data using the API client - snapshots come with USD values already calculated
         response = await api_client.get_collateral_vaults_snapshots(limit=100)
-        
+
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error: {response['error']}")
             return {
@@ -116,11 +115,11 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
                 "unique_vaults": 0,
                 "total_snapshots": 0
             }
-        
+
         # Extract snapshots from successful response
-        snapshots = response.latestSnapshots
+        snapshots = response.snapshots
         total_snapshots = len(snapshots)
-        
+
         if not snapshots:
             logger.warning("No snapshots returned from API")
             return {
@@ -128,45 +127,40 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
                 "unique_vaults": 0,
                 "total_snapshots": 0,
                 "snapshots": [],
-                "enhanced_snapshots": [],
                 "summary_metrics": {},
-                "pricing_warnings": []
             }
-        
-        # Calculate USD values using EVault pricing
-        enhanced_snapshots, pricing_warnings = await calculate_multiple_snapshots_usd_values(snapshots)
-        
-        # Count unique vault addresses
-        unique_vault_addresses = set()
-        for snapshot in snapshots:
-            unique_vault_addresses.add(snapshot.vaultAddress)
-        
-        unique_vaults_count = len(unique_vault_addresses)
-        
-        # Calculate summary metrics from enhanced snapshots
-        summary_metrics = get_summary_metrics_from_snapshots(enhanced_snapshots)
-        
-        logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults with {len(pricing_warnings)} pricing warnings")
-        
+
+        # Get aggregated metrics from API response (already calculated)
+        aggregates = response.aggregates or {}
+        summary_metrics = {
+            "total_user_collateral_usd": aggregates.get("totalUserOwnedCollateralUsd", 0.0),
+            "total_max_release_usd": aggregates.get("totalMaxReleaseUsd", 0.0),
+            "total_max_repay_usd": aggregates.get("totalMaxRepayUsd", 0.0),
+            "total_assets_usd": aggregates.get("totalAssetsDepositedOrReservedUsd", 0.0),
+        }
+
+        unique_vaults_count = aggregates.get("uniqueVaults", 0)
+        total_unique_vaults = response.totalUniqueVaults or unique_vaults_count
+
+        logger.info(f"Successfully fetched {total_snapshots} pre-priced snapshots from {unique_vaults_count} unique vaults")
+
         # Prepare data for caching
         data = {
             "error": None,
             "unique_vaults": unique_vaults_count,
             "total_snapshots": total_snapshots,
-            "total_unique_vaults": getattr(response, 'totalUniqueVaults', None),
-            "snapshots": snapshots,  # Keep original for compatibility
-            "enhanced_snapshots": enhanced_snapshots,
+            "total_unique_vaults": total_unique_vaults,
+            "snapshots": snapshots,
             "summary_metrics": summary_metrics,
-            "pricing_warnings": pricing_warnings,
             "cached_at": time.time(),
             "from_cache": False
         }
-        
+
         # Cache the processed data
         cache_collateral_vault_data(data)
-        
+
         return data
-        
+
     except Exception as e:
         logger.error(f"Failed to fetch vault data: {e}", exc_info=True)
         return {
@@ -174,26 +168,25 @@ async def fetch_collateral_vault_data() -> Dict[str, Any]:
             "unique_vaults": 0,
             "total_snapshots": 0,
             "snapshots": [],
-            "enhanced_snapshots": [],
             "summary_metrics": {},
-            "pricing_warnings": []
         }
 
 
 async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, Any]:
     """
-    Fetch collateral vault snapshots at a specific block with caching at the processed data level.
-    
+    Fetch collateral vault snapshots at a specific block with caching.
+    Snapshots are already priced by the API, no need for local USD calculations.
+
     Args:
         block_number: Block number to fetch data for
-        
+
     Returns:
         Dict containing metrics or error information
     """
     try:
         # Check for cached block data first
         from src.utils.cached_data import get_cached_collateral_vault_block_data, cache_collateral_vault_block_data
-        
+
         cached_data = get_cached_collateral_vault_block_data(block_number)
         if cached_data:
             # Add cache metadata
@@ -202,93 +195,101 @@ async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, A
             cached_data["from_cache"] = True
             logger.info(f"Using cached collateral vault block data for block {block_number} (age: {cache_age:.1f}s)")
             return cached_data
-        
-        logger.info(f"Fetching fresh collateral vaults snapshots at block {block_number:,}...")
-        
-        # Create block snapshot using the block snapshot client
-        block_snapshot = await block_snapshot_client.create_snapshot_at_block(block_number)
-        
-        if not block_snapshot or not hasattr(block_snapshot, 'vault_snapshots'):
-            logger.error(f"Failed to create block snapshot for block {block_number}")
+
+        logger.info(f"Fetching collateral vaults snapshots at block {block_number:,} with pre-calculated USD values...")
+
+        # Fetch snapshots directly from API at the specified block
+        response = await api_client.get_collateral_vaults_snapshots(
+            limit=100,
+            block_number=block_number
+        )
+
+        if isinstance(response, dict) and "error" in response:
+            logger.error(f"API error: {response['error']}")
             return {
-                "error": "Failed to create block snapshot",
+                "error": response["error"],
                 "unique_vaults": 0,
                 "total_snapshots": 0,
                 "snapshots": [],
-                "enhanced_snapshots": [],
                 "summary_metrics": {},
-                "pricing_warnings": []
+                "block_number": block_number,
+                "is_historical": True
             }
-        
-        vault_snapshots = block_snapshot.vault_snapshots
-        total_snapshots = len(vault_snapshots)
-        
-        if not vault_snapshots:
+
+        # Extract snapshots from successful response
+        snapshots = response.snapshots
+        total_snapshots = len(snapshots)
+
+        if not snapshots:
             logger.warning(f"No snapshots found for block {block_number}")
+            # Get block timestamp if available
+            block_timestamp = None
+            if snapshots:
+                block_timestamp = int(snapshots[0].blockTimestamp)
+
             return {
                 "error": None,
                 "unique_vaults": 0,
                 "total_snapshots": 0,
                 "snapshots": [],
-                "enhanced_snapshots": [],
                 "summary_metrics": {},
-                "pricing_warnings": [],
                 "block_number": block_number,
-                "block_timestamp": block_snapshot.timestamp,
+                "block_timestamp": block_timestamp,
                 "is_historical": True
             }
-        
-        # Convert block snapshot format to match the expected format
-        enhanced_snapshots = []
-        snapshots = []  # For compatibility
-        
-        for vault_snapshot in vault_snapshots:
-            enhanced_snapshot = {
-                'original_snapshot': vault_snapshot['original_snapshot'],
-                'calculated_usd_values': vault_snapshot['calculated_usd_values'],
-                'vault_address': vault_snapshot['vault_address'],
-                'credit_vault': vault_snapshot['credit_vault'],
-                'debt_vault': vault_snapshot['debt_vault'],
-                'has_pricing_errors': vault_snapshot['has_pricing_errors']
-            }
-            enhanced_snapshots.append(enhanced_snapshot)
-            snapshots.append(vault_snapshot['original_snapshot'])
-        
-        # Calculate summary metrics from enhanced snapshots
-        summary_metrics = get_summary_metrics_from_snapshots(enhanced_snapshots)
-        
-        # Collect pricing warnings
-        pricing_warnings = []
-        pricing_warnings.extend(block_snapshot.pricing_errors)
-        pricing_warnings.extend(block_snapshot.fetch_errors)
-        
-        unique_vaults_count = len(set(vs['vault_address'] for vs in vault_snapshots))
-        
-        logger.info(f"Successfully processed {total_snapshots} snapshots from {unique_vaults_count} unique vaults at block {block_number} with {len(pricing_warnings)} warnings")
-        
+
+        # Get aggregated metrics from API response (already calculated)
+        aggregates = response.aggregates or {}
+        summary_metrics = {
+            "total_user_collateral_usd": aggregates.get("totalUserOwnedCollateralUsd", 0.0),
+            "total_max_release_usd": aggregates.get("totalMaxReleaseUsd", 0.0),
+            "total_max_repay_usd": aggregates.get("totalMaxRepayUsd", 0.0),
+            "total_assets_usd": aggregates.get("totalAssetsDepositedOrReservedUsd", 0.0),
+        }
+
+        unique_vaults_count = aggregates.get("uniqueVaults", 0)
+        total_unique_vaults = response.totalUniqueVaults or unique_vaults_count
+
+        # Get block metadata from response (handle various types, convert to int)
+        try:
+            snapshot_block = int(response.snapshotBlock) if response.snapshotBlock else block_number
+        except (ValueError, TypeError):
+            snapshot_block = block_number
+
+        try:
+            price_block = int(response.priceBlock) if response.priceBlock else block_number
+        except (ValueError, TypeError):
+            price_block = block_number
+
+        # Get block timestamp from first snapshot if available
+        block_timestamp = None
+        if snapshots:
+            block_timestamp = int(snapshots[0].blockTimestamp)
+
+        logger.info(f"Successfully fetched {total_snapshots} pre-priced snapshots from {unique_vaults_count} unique vaults at block {block_number}")
+
         # Prepare data for caching
         data = {
             "error": None,
             "unique_vaults": unique_vaults_count,
             "total_snapshots": total_snapshots,
-            "total_unique_vaults": block_snapshot.total_vaults,
-            "snapshots": snapshots,  # Keep original for compatibility
-            "enhanced_snapshots": enhanced_snapshots,
+            "total_unique_vaults": total_unique_vaults,
+            "snapshots": snapshots,
             "summary_metrics": summary_metrics,
-            "pricing_warnings": pricing_warnings,
             "block_number": block_number,
-            "block_timestamp": block_snapshot.timestamp,
-            "evault_prices_block": block_snapshot.evault_prices_block,
+            "block_timestamp": block_timestamp,
+            "snapshot_block": snapshot_block,
+            "evault_prices_block": price_block,
             "is_historical": True,
             "cached_at": time.time(),
             "from_cache": False
         }
-        
+
         # Cache the processed block data
         cache_collateral_vault_block_data(block_number, data)
-        
+
         return data
-        
+
     except Exception as e:
         logger.error(f"Failed to fetch vault data at block {block_number}: {e}", exc_info=True)
         return {
@@ -296,32 +297,10 @@ async def fetch_collateral_vault_data_at_block(block_number: int) -> Dict[str, A
             "unique_vaults": 0,
             "total_snapshots": 0,
             "snapshots": [],
-            "enhanced_snapshots": [],
             "summary_metrics": {},
-            "pricing_warnings": [],
             "block_number": block_number,
             "is_historical": True
         }
-
-
-def format_snapshots_for_table(snapshots: List) -> List[Dict[str, Any]]:
-    """
-    Format CollateralVaultSnapshot objects for table display using new pricing mechanism.
-    
-    Args:
-        snapshots: List of CollateralVaultSnapshot objects
-        
-    Returns:
-        List of dictionaries formatted for DataTable
-    """
-    if not snapshots:
-        return []
-    
-    # Calculate USD values using EVault pricing
-    enhanced_snapshots, _ = calculate_multiple_snapshots_usd_values(snapshots)
-    
-    # Format enhanced snapshots for table
-    return format_enhanced_snapshots_for_table(enhanced_snapshots)
 
 
 def get_table_columns() -> List[Dict[str, str]]:
@@ -500,7 +479,7 @@ async def fetch_evaults_data_with_history(vault_type: str) -> Dict[str, Any]:
         # If we have filtered metrics, fetch historical data
         vault_historical_data = []
         if filtered_metrics:
-            vault_addresses = list(set([metric.vaultAddress for metric in filtered_metrics]))
+            vault_addresses = list(set([metric.vault_address for metric in filtered_metrics]))
             logger.info(f"Fetching historical data for {len(vault_addresses)} {vault_type} vault(s)")
             logger.info(f"Vault addresses: {vault_addresses}")
             vault_historical_data = await fetch_evaults_historical_data(vault_addresses)
@@ -658,29 +637,26 @@ def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
     table_data = []
     for metric in metrics:
         # Get decimals for proper scaling
-        decimals = int(metric.decimals) if metric.decimals != "0" else 18
-        scaling_factor = 10 ** decimals
-        
-        # Scale totalAssets and totalBorrows using decimals
-        total_assets = float(metric.totalAssets) / scaling_factor if metric.totalAssets != "0" else 0.0
-        total_borrows = float(metric.totalBorrows) / scaling_factor if metric.totalBorrows != "0" else 0.0
-        
+        # API v1.2: All numeric values are already floats/ints, pre-scaled and human-readable
+        # No decimal scaling needed - values arrive ready to use
+
+        # Total assets and borrows are already scaled by token decimals
+        total_assets = float(metric.total_assets) if metric.total_assets != 0 else 0.0
+        total_borrows = float(metric.total_borrows) if metric.total_borrows != 0 else 0.0
+
         # Calculate utilization rate
         utilization_rate = (total_borrows / total_assets * 100) if total_assets > 0 else 0.0
-        
-        # Format USD values - scale by 1e18 if they are very large
-        total_assets_usd_raw = float(metric.totalAssetsUsd) if metric.totalAssetsUsd != "0" else 0.0
-        total_assets_usd = total_assets_usd_raw / 1e18 if total_assets_usd_raw > 1e12 else total_assets_usd_raw
-        
-        total_borrows_usd_raw = float(metric.totalBorrowsUsd) if metric.totalBorrowsUsd != "0" else 0.0
-        total_borrows_usd = total_borrows_usd_raw / 1e18 if total_borrows_usd_raw > 1e12 else total_borrows_usd_raw
-        
-        # Format interest rate as percentage
-        interest_rate = float(metric.interestRate) / 1e18 * 100 if metric.interestRate != "0" else 0.0
+
+        # USD values are already human-readable floats from API
+        total_assets_usd = metric.total_assets_usd if metric.total_assets_usd != 0 else 0.0
+        total_borrows_usd = metric.total_borrows_usd if metric.total_borrows_usd != 0 else 0.0
+
+        # Interest rate is already scaled (e.g., 0.05 = 5%), just multiply by 100 for percentage
+        interest_rate = metric.interest_rate * 100 if metric.interest_rate != 0 else 0.0
         
         row = {
-            "Chain ID": metric.chainId,
-            "Vault Address": metric.vaultAddress,  # Store full address for copying
+            "Chain ID": metric.chain_id,
+            "Vault Address": metric.vault_address,  # Store full address for copying
             "Name": metric.name,
             "Symbol": metric.symbol,
             "Asset": metric.asset,  # Store full address for copying
@@ -690,9 +666,9 @@ def format_evaults_for_table(metrics: List) -> List[Dict[str, Any]]:
             "Total Borrows (USD)": total_borrows_usd,
             "Interest Rate (%)": interest_rate,
             "Utilization Rate (%)": utilization_rate,
-            "Block Number": int(metric.blockNumber),
-            "Block Timestamp": datetime.fromtimestamp(int(metric.blockTimestamp)).strftime("%Y-%m-%d %H:%M:%S"),
-            "Actions": f"[More](/evaults/{metric.vaultAddress})"
+            "Block Number": int(metric.block_number),
+            "Block Timestamp": datetime.fromtimestamp(int(metric.block_timestamp)).strftime("%Y-%m-%d %H:%M:%S"),
+            "Actions": f"[More](/evaults/{metric.vault_address})"
         }
         table_data.append(row)
     
@@ -873,21 +849,19 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
             retry_callback="collateral-section-refresh"
         )
     else:
-        # Create status message with pricing warnings if any
-        pricing_warning_summary = get_pricing_warnings_summary(data.get("pricing_warnings", []))
-        
+        # Create status message (no pricing warnings since API provides pre-priced data)
         # Determine if this is historical data
         is_historical = data.get("is_historical", False)
         block_number = data.get("block_number")
         block_timestamp = data.get("block_timestamp")
-        
+
         success_alerts = []
-        
+
         if is_historical and block_number:
             formatted_timestamp = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S") if block_timestamp else "Unknown"
             success_alerts.append(
                 dbc.Alert(
-                    f"Historical snapshot loaded for block {block_number:,} ({formatted_timestamp})", 
+                    f"Historical snapshot loaded for block {block_number:,} ({formatted_timestamp})",
                     color="info",
                     dismissable=True,
                     duration=5000
@@ -898,10 +872,10 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
             cache_info = ""
             cache_age = data.get("cache_age", 0)
             from_cache = data.get("from_cache", False)
-            
+
             if from_cache:
                 cache_info = f" (Cached {cache_age:.1f}s ago)"
-            
+
             try:
                 from src.utils.cached_data import get_cache_stats
                 cache_stats = get_cache_stats()
@@ -909,27 +883,18 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                     cache_info = f" (Cache: {cache_stats.get('cache_type', 'unknown')}, TTL: {cache_stats.get('default_timeout', 300)}s)"
             except Exception as e:
                 logger.debug(f"Could not get cache stats: {e}")
-            
+
             # Create enhanced status message with cache info
             cache_status = " [Cached]" if from_cache and (n_clicks == 0 or n_clicks is None) else " [Fresh Data]"
             success_alerts.append(
                 dbc.Alert(
-                    f"Latest data loaded successfully{cache_status}{cache_info}", 
+                    f"Latest data loaded successfully (pre-priced by API){cache_status}{cache_info}",
                     color="success",
                     dismissable=True,
                     duration=3000
                 )
             )
-        
-        if pricing_warning_summary:
-            success_alerts.append(
-                dbc.Alert(
-                    pricing_warning_summary,
-                    color="warning",
-                    dismissable=True
-                )
-            )
-        
+
         status_message = html.Div(success_alerts)
         
         # Use calculated summary metrics from enhanced snapshots
@@ -965,8 +930,11 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
             ], width=12, md=6, lg=4)
         ], className="g-3")
         
+        # Get pre-priced snapshots and convert to enhanced format for charts
+        snapshots = data.get("snapshots", [])
+        enhanced_snapshots = convert_priced_snapshots_to_enhanced(snapshots) if snapshots else []
+
         # Create credit flow Sankey diagram
-        enhanced_snapshots = data.get("enhanced_snapshots", [])
         if enhanced_snapshots:
             # Prepare Sankey data
             sankey_data = prepare_sankey_data_for_credit_flow(enhanced_snapshots, symbol_mapping)
@@ -979,7 +947,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                 html.H5("Credit Flow Analysis", className="mb-3"),
                 html.P("No data available for credit flow analysis", className="text-muted text-center p-4")
             ])
-        
+
         # Create health factor chart
         if enhanced_snapshots:
             # Calculate health factors for chart
@@ -993,7 +961,7 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                 html.H5("Health Factor Analysis", className="mb-3"),
                 html.P("No data available for health factor analysis", className="text-muted text-center p-4")
             ])
-        
+
         # Create LTV vs Position Size heatmap
         if enhanced_snapshots:
             # Calculate LTV and position size data for heatmap
@@ -1007,10 +975,10 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
                 html.H5("User LTV vs Position Size Distribution", className="mb-3"),
                 html.P("No data available for LTV vs Position Size heatmap", className="text-muted text-center p-4")
             ])
-        
-        # Create table component
-        if data.get("enhanced_snapshots"):
-            table_data = format_enhanced_snapshots_for_table(data["enhanced_snapshots"], symbol_mapping)
+
+        # Create table component using pre-priced snapshots
+        if snapshots:
+            table_data = format_snapshots_for_table(snapshots, symbol_mapping)
             
             # Create tooltips for address columns
             address_tooltips = create_address_tooltips(table_data, [
@@ -1084,10 +1052,19 @@ def update_collateral_metrics(n_clicks, pathname, selected_block):
     if is_historical:
         block_number = data.get("block_number")
         evault_prices_block = data.get("evault_prices_block")
-        if evault_prices_block and evault_prices_block != block_number:
-            last_updated = f"Historical snapshot at block {block_number:,} (prices from block {evault_prices_block:,}) - Updated: {datetime.now().strftime('%H:%M:%S')}"
-        else:
-            last_updated = f"Historical snapshot at block {block_number:,} - Updated: {datetime.now().strftime('%H:%M:%S')}"
+
+        # Convert to int for formatting (handle string/object types)
+        try:
+            block_num = int(block_number) if block_number else 0
+            price_block_num = int(evault_prices_block) if evault_prices_block else block_num
+
+            if evault_prices_block and price_block_num != block_num:
+                last_updated = f"Historical snapshot at block {block_num:,} (prices from block {price_block_num:,}) - Updated: {datetime.now().strftime('%H:%M:%S')}"
+            else:
+                last_updated = f"Historical snapshot at block {block_num:,} - Updated: {datetime.now().strftime('%H:%M:%S')}"
+        except (ValueError, TypeError):
+            # Fallback if conversion fails
+            last_updated = f"Historical snapshot at block {block_number} - Updated: {datetime.now().strftime('%H:%M:%S')}"
     else:
         last_updated = f"Latest data - Updated: {datetime.now().strftime('%H:%M:%S')}"
     
@@ -1253,30 +1230,27 @@ def update_evaults_metrics(n_clicks, vault_type, pathname):
             symbols = [m.symbol for m in filtered_metrics]
             logger.info(f"Filtered vault symbols: {symbols}")
         
-        # Calculate summary metrics with proper scaling using filtered data
+        # Calculate summary metrics using filtered data
+        # API v1.2: All numeric values are already floats, pre-scaled and human-readable
         total_assets_usd = 0.0
         total_borrows_usd = 0.0
-        
+
         for m in filtered_metrics:
-            # Sum total assets USD
-            if m.totalAssetsUsd != "0":
-                assets_usd_raw = float(m.totalAssetsUsd)
-                # Scale by 1e18 if value is very large
-                assets_usd_scaled = assets_usd_raw / 1e18 if assets_usd_raw > 1e12 else assets_usd_raw
-                total_assets_usd += assets_usd_scaled
-            
-            # Sum total borrows USD
-            if m.totalBorrowsUsd != "0":
-                borrows_usd_raw = float(m.totalBorrowsUsd)
-                # Scale by 1e18 if value is very large
-                borrows_usd_scaled = borrows_usd_raw / 1e18 if borrows_usd_raw > 1e12 else borrows_usd_raw
-                total_borrows_usd += borrows_usd_scaled
+            # Sum total assets USD - already human-readable floats
+            if m.total_assets_usd != 0:
+                total_assets_usd += m.total_assets_usd
+
+            # Sum total borrows USD - already human-readable floats
+            if m.total_borrows_usd != 0:
+                total_borrows_usd += m.total_borrows_usd
+
         avg_utilization = 0.0
         if filtered_metrics:
             utilization_rates = []
             for m in filtered_metrics:
-                total_assets = float(m.totalAssets) if m.totalAssets != "0" else 0.0
-                total_borrows = float(m.totalBorrows) if m.totalBorrows != "0" else 0.0
+                # Values are already floats from API
+                total_assets = float(m.total_assets) if m.total_assets != 0 else 0.0
+                total_borrows = float(m.total_borrows) if m.total_borrows != 0 else 0.0
                 if total_assets > 0:
                     utilization_rates.append(total_borrows / total_assets * 100)
             avg_utilization = sum(utilization_rates) / len(utilization_rates) if utilization_rates else 0.0
@@ -1574,24 +1548,25 @@ def format_internal_liquidations_for_table(liquidations: List, symbol_mapping: D
     table_data = []
     
     for liq in liquidations:
-        # Convert timestamps and block numbers
-        block_timestamp = int(liq.blockTimestamp)
+        # Convert timestamps - already integers from API
+        block_timestamp = liq.blockTimestamp
         formatted_time = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S")
         
-        # Format USD values (divide by 1e18)
-        credit_reserved_usd = float(liq.creditReservedUsd) / 1e18
-        debt_usd = float(liq.debtUsd) / 1e18
-        total_collateral_usd = float(liq.totalCollateralUsd) / 1e18
-        user_owned_collateral_usd = float(liq.userOwnedCollateralUsd) / 1e18
-        
-        # Format non-USD values (divide by appropriate decimals)
-        credit_reserved = float(liq.creditReserved) / 1e18
-        debt = float(liq.debt) / 1e18
-        total_collateral = float(liq.totalCollateral) / 1e18
-        user_owned_collateral = float(liq.userOwnedCollateral) / 1e18
-        
-        # Format LTV (divide by 1e18 and convert to percentage)
-        ltv_value = float(liq.twyneLiqLtv) / 1e18 * 100
+        # API v1.2: All values are already floats, pre-scaled and human-readable
+        # USD values - already floats
+        credit_reserved_usd = liq.creditReservedUsd
+        debt_usd = liq.debtUsd
+        total_collateral_usd = liq.totalCollateralUsd
+        user_owned_collateral_usd = liq.userOwnedCollateralUsd
+
+        # Token amounts - already floats, scaled by decimals
+        credit_reserved = liq.creditReserved
+        debt = liq.debt
+        total_collateral = liq.totalCollateral
+        user_owned_collateral = liq.userOwnedCollateral
+
+        # LTV - already scaled float (e.g., 0.75 = 75%), just multiply by 100 for percentage
+        ltv_value = liq.twyneLiqLtv * 100
         
         # Get symbols or use full addresses (for copying)
         collateral_vault_display = symbol_mapping.get(liq.collateralVault.lower(), liq.collateralVault)
@@ -1641,23 +1616,25 @@ def format_external_liquidations_for_table(liquidations: List, symbol_mapping: D
     table_data = []
     
     for liq in liquidations:
-        # Convert timestamps
-        block_timestamp = int(liq.blockTimestamp)
+        # Convert timestamps - already integers from API
+        block_timestamp = liq.blockTimestamp
         formatted_time = datetime.fromtimestamp(block_timestamp).strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Format USD values (divide by 1e18)
-        repay_assets_usd = float(liq.repayAssetsUsd) / 1e18
-        yield_balance_usd = float(liq.yieldBalanceUsd) / 1e18
-        pre_collateral_usd = float(liq.preCollateralAmountUsd) / 1e18
-        post_collateral_usd = float(liq.collateralAmountUsd) / 1e18
-        pre_debt_usd = float(liq.preDebtAmountUsd) / 1e18
-        post_debt_usd = float(liq.debtAmountUsd) / 1e18
-        pre_credit_reserved_usd = float(liq.creditReservedUsd) / 1e18
-        
-        euler_liq_ltv = float(liq.eulerLiqLtv) / 1e4 
-        twyne_liq_ltv = float(liq.twyneLiqLtv) / 1e4 
-        twyne_max_liq_ltv = float(liq.twyneMaxLiqLtv) / 1e4 
-        twyne_safety_buffer = float(liq.twyneSafetyBuffer) / 1e4 
+
+        # API v1.2: All values are already floats, pre-scaled and human-readable
+        # USD values - already floats
+        repay_assets_usd = liq.repayAssetsUsd
+        yield_balance_usd = liq.yieldBalanceUsd
+        pre_collateral_usd = liq.preCollateralAmountUsd
+        post_collateral_usd = liq.collateralAmountUsd
+        pre_debt_usd = liq.preDebtAmountUsd
+        post_debt_usd = liq.debtAmountUsd
+        pre_credit_reserved_usd = liq.creditReservedUsd
+
+        # LTV values - already scaled floats (e.g., 0.75 = 75%)
+        euler_liq_ltv = liq.eulerLiqLtv
+        twyne_liq_ltv = liq.twyneLiqLtv
+        twyne_max_liq_ltv = liq.twyneMaxLiqLtv
+        twyne_safety_buffer = liq.twyneSafetyBuffer 
 
         euler_pre_ltv = (pre_debt_usd / pre_collateral_usd) 
         twyne_pre_ltv = (pre_debt_usd / (pre_collateral_usd - pre_credit_reserved_usd))
