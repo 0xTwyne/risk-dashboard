@@ -296,8 +296,6 @@ def create_usd_progression_from_priced_snapshots(
     """
     errors = []
 
-    print(f"Plotting progression from {len(plot_df)} snapshots")
-
     try:
         # Create the plot
         fig = go.Figure()
@@ -665,9 +663,6 @@ def update_collateral_vault_detail(n_clicks_refresh, pathname, vault_address):
         df_snapshots = pd.DataFrame(data)
         df_snapshots = df_snapshots[df_snapshots['state'] == 'post'].copy()
         df_snapshots['datetime'] = pd.to_datetime(df_snapshots['blockTimestamp'], unit='s')
-        for column in df_snapshots.columns:
-            print(f"Column: {column}: {df_snapshots.iloc[0][column]} || {df_snapshots.iloc[2][column]}")
-
 
         # Create the USD progression chart (no EVault data needed)
         fig, chart_errors = create_usd_progression_from_priced_snapshots(df_snapshots)
