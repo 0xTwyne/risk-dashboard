@@ -5,6 +5,7 @@ Collects all Twyne and related Euler vault addresses for monitoring.
 
 import json
 import logging
+import asyncio
 from typing import List, Set
 from pathlib import Path
 from ape import networks, Contract
@@ -63,14 +64,14 @@ def get_twyne_vaults_from_api(chain_id: int = DEFAULT_CHAIN_ID) -> List[str]:
     """
     try:
         logger.info(f"Fetching Twyne vaults from API for chain {chain_id}...")
-        
-        # Fetch all EVaults
-        response = api_client.get_evaults_latest()
-        
+
+        # Fetch all EVaults - need to run async method in sync context
+        response = asyncio.run(api_client.get_evaults_latest())
+
         if isinstance(response, dict) and "error" in response:
             logger.error(f"API error fetching EVaults: {response['error']}")
             return []
-        
+
         # Extract metrics
         metrics = response.latestMetrics or []
         
@@ -80,8 +81,8 @@ def get_twyne_vaults_from_api(chain_id: int = DEFAULT_CHAIN_ID) -> List[str]:
             # Check if it's a Twyne vault (case-sensitive)
             if metric.symbol.startswith("ee"):
                 # Check chain ID
-                if int(metric.chainId) == chain_id:
-                    twyne_vaults.append(metric.vaultAddress)
+                if metric.chain_id == chain_id:
+                    twyne_vaults.append(metric.vault_address)
         
         logger.info(f"Found {len(twyne_vaults)} Twyne vaults on chain {chain_id}")
         return twyne_vaults

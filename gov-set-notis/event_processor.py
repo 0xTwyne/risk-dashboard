@@ -4,6 +4,7 @@ Fetches gov-set events and identifies new ones that haven't been processed.
 """
 
 import logging
+import asyncio
 from typing import Dict, List, Any, Optional, Set
 
 from src.api import api_client
@@ -48,16 +49,16 @@ def fetch_new_events_for_vault(
     """
     try:
         logger.debug(f"Fetching {event_type} events for vault {vault_address}")
-        
-        # Call API to get latest events
-        response = api_client.get_gov_set_events(
+
+        # Call API to get latest events - need to run async method in sync context
+        response = asyncio.run(api_client.get_gov_set_events(
             event_type=event_type,
             vault_address=vault_address,
             chain_ids=[chain_id],
             limit=FETCH_LIMIT_PER_EVENT_TYPE,
             offset=0
-        )
-        
+        ))
+
         if isinstance(response, dict) and "error" in response:
             logger.warning(f"API error fetching {event_type} for {vault_address}: {response['error']}")
             return []
